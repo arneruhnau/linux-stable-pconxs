@@ -62,7 +62,7 @@
 				 <&clks 121>, <&clks 26>;
 			    clock-names = "gpu3d_clk", "gpu3d_shader_clk", "gpu3d_axi_clk",
 					  "gpu2d_clk", "gpu2d_axi_clk";
-			    interrupts = <0 9 0x04>, <0 10 0x04>, <0 11 0x04>;
+			    interrupts = <0 9 0x04>, <0 10 0x04>;
 			    interrupt-names = "irq-3d", "irq-2d";
 			    reg = <0 0>, <0x00130000 0x4000>, <0x00134000 0x4000>;
 			    reg-names = "phys-addr", "iobase-3d", "iobase-2d";
