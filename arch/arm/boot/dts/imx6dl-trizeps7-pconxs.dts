@@ -50,6 +50,10 @@
 
 };
 
+&gpu {
+	status = "okay";
+};
+
 &iomuxc {
 	trizeps7-pconxs {
 		pinctrl_i2c2_2: i2c2grp-2 {
