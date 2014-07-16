@@ -312,27 +312,29 @@
 	status = "okay";
 };
 
+/*
 &usdhc1 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc1_2>;
 	status = "okay";
 	vmmc-supply = <&sw4_reg>;
 };
-
+*/
 &usdhc2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc2_2>;
-	/*cd-gpios = <&gpio1 4 0>;*/
-	non-removable;
+	keep-power-in-suspend;
 	status = "okay";
 	vmmc-supply = <&sw4_reg>;
 };
-
 &usdhc4 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc4_1>;
-/* What about reset pin SD4_RST at NANDF_ALE? */
 	status = "okay";
+	keep-power-in-suspend;
+	non-removable;
+	no-1-8-v;
+	bus-width = <4>;
 	vmmc-supply = <&sw4_reg>;
 };
 
