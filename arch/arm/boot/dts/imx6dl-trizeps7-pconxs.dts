@@ -108,6 +108,8 @@
 				MX6QDL_PAD_SD1_DAT1__SD1_DATA1 0x17059
 				MX6QDL_PAD_SD1_DAT2__SD1_DATA2 0x17059
 				MX6QDL_PAD_SD1_DAT3__SD1_DATA3 0x17059
+				MX6QDL_PAD_KEY_COL2__GPIO4_IO10 0x20000
+				MX6QDL_PAD_GPIO_2__GPIO1_IO02 0x20000
 			>;
 		};
 		pinctrl_usdhc2_2: usdhc2grp-2 {
@@ -317,13 +319,13 @@
 	pinctrl-0 = <&pinctrl_usdhc1_2>;
 	status = "okay";
 /* supply comes from vgen4 and vgen3 ... */
-/* there's reset (&gpio1 2 0) and power down (&gpio4 10 0) GPIOs */
+	reset-gpios = <&gpio1 2 0>;
+	shutdown-gpios = <&gpio4 10 0>;
 	non-removable;
 	keep-power-in-suspend;
 	no-1-8-v;
 	bus-width = <4>;
 };
-*/
 &usdhc2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc2_2>;
