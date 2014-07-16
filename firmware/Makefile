@@ -137,6 +137,7 @@ fw-shipped-$(CONFIG_VIDEO_CPIA2) += cpia2/stv0672_vp4.bin
 fw-shipped-$(CONFIG_YAM) += yam/1200.bin yam/9600.bin
 
 fw-shipped-${CONFIG_IMX_SDMA} += imx/sdma/sdma-imx6q.bin
+fw-shipped-${CONFIG_MWIFIEX_SDIO} += mrvl/sd8787_uapsta.bin
 
 fw-shipped-all := $(fw-shipped-y) $(fw-shipped-m) $(fw-shipped-)
 

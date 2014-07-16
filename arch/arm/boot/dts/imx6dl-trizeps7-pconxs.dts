@@ -312,12 +312,16 @@
 	status = "okay";
 };
 
-/*
-&usdhc1 {
+&usdhc1 { /* this is the WiBear 11n wireless module */
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc1_2>;
 	status = "okay";
-	vmmc-supply = <&sw4_reg>;
+/* supply comes from vgen4 and vgen3 ... */
+/* there's reset (&gpio1 2 0) and power down (&gpio4 10 0) GPIOs */
+	non-removable;
+	keep-power-in-suspend;
+	no-1-8-v;
+	bus-width = <4>;
 };
 */
 &usdhc2 {
