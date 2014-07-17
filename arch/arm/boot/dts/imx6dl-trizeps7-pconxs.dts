@@ -326,13 +326,6 @@
 	no-1-8-v;
 	bus-width = <4>;
 };
-&usdhc2 {
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_usdhc2_2>;
-	keep-power-in-suspend;
-	status = "okay";
-	vmmc-supply = <&sw4_reg>;
-};
 &usdhc4 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc4_1>;
