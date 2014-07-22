@@ -103,7 +103,7 @@
 		pinctrl_usdhc1_2: usdhc1grp-2 {
 			fsl,pins = <
 				MX6QDL_PAD_SD1_CMD__SD1_CMD    0x17059
-				MX6QDL_PAD_SD1_CLK__SD1_CLK    0x10059
+				MX6QDL_PAD_SD1_CLK__SD1_CLK    0x17059
 				MX6QDL_PAD_SD1_DAT0__SD1_DATA0 0x17059
 				MX6QDL_PAD_SD1_DAT1__SD1_DATA1 0x17059
 				MX6QDL_PAD_SD1_DAT2__SD1_DATA2 0x17059
@@ -318,13 +318,14 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc1_2>;
 	status = "okay";
-/* supply comes from vgen4 and vgen3 ... */
+/* 1.8V comes from vgen4_reg ... */
 	reset-gpios = <&gpio1 2 0>;
 	shutdown-gpios = <&gpio4 10 0>;
 	non-removable;
 	keep-power-in-suspend;
 	no-1-8-v;
 	bus-width = <4>;
+	cap-sdio-irq;
 };
 &usdhc4 {
 	pinctrl-names = "default";
