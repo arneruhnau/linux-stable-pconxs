@@ -21,10 +21,7 @@
 			regulator-name = "usb_otg_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-/*
-			gpio = <&gpiox xx 0>;
-			enable-active-high; low?
-*/
+			gpio = <&gpio2 0 1>;
 		};
 		reg_usb_ht_vbus: regulator@1 {
 			compatible = "regulator-fixed";
@@ -32,10 +29,7 @@
 			regulator-name = "usb_h1_vbus";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-/*
-			gpio = <&gpiox xx 0>;
-			enable-active-high; low?
-*/
+			gpio = <&gpio2 2 1>;
 		};
 	};
 
@@ -101,6 +95,19 @@
 				MX6QDL_PAD_KEY_ROW0__UART4_RX_DATA 0x1b0b1
 			>;
 		};
+		pinctrl_usbhost: usbhostgrp {
+			fsl,pins = <
+				MX6QDL_PAD_NANDF_D2__GPIO2_IO02	0x80000000
+				MX6QDL_PAD_NANDF_D1__GPIO2_IO01	0x80000000
+			>;
+		};
+		pinctrl_usbotg: usbotggrp {
+			fsl,pins = <
+				MX6QDL_PAD_GPIO_1__USB_OTG_ID 		0x17059
+				MX6QDL_PAD_NANDF_RB0__GPIO6_IO10 	0x80000000
+				MX6QDL_PAD_NANDF_D0__GPIO2_IO00 	0x80000000
+			>;
+		};
 		pinctrl_usdhc1_2: usdhc1grp-2 {
 			fsl,pins = <
 				MX6QDL_PAD_SD1_CMD__SD1_CMD    0x17059
@@ -109,8 +116,8 @@
 				MX6QDL_PAD_SD1_DAT1__SD1_DATA1 0x17059
 				MX6QDL_PAD_SD1_DAT2__SD1_DATA2 0x17059
 				MX6QDL_PAD_SD1_DAT3__SD1_DATA3 0x17059
-				MX6QDL_PAD_KEY_COL2__GPIO4_IO10 0x20000
-				MX6QDL_PAD_GPIO_2__GPIO1_IO02 0x20000
+				MX6QDL_PAD_KEY_COL2__GPIO4_IO10 0x130B0
+				MX6QDL_PAD_GPIO_2__GPIO1_IO02 0x130B0
 			>;
 		};
 		pinctrl_usdhc2_2: usdhc2grp-2 {
@@ -322,6 +329,24 @@
 &uart4 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart4_1>;
+	status = "okay";
+};
+
+&usbh1 {
+	vbus-supply = <&reg_usb_ht_vbus>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_usbhost>;
+	dr_mode = "host";
+	status = "disabled";
+	disable-over-current;
+	maximum-speed = "full-speed";
+};
+
+&usbotg {
+	vbus-supply = <&reg_usb_otg_vbus>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_usbotg>;
+	disable-over-current;
 	status = "okay";
 };
 
