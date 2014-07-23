@@ -182,6 +182,7 @@
 		compatible = "24c02";
 		reg = <0x51>;
 		pagesize = <16>;
+		status = "okay";
 	};
 	ssd1305: ssd1305@3C {
 		compatible = "solomon,ssd1305fb-i2c";
