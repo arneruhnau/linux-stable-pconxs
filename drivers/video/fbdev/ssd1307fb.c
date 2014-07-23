@@ -408,7 +408,105 @@ static struct ssd1307fb_ops ssd1307fb_ssd1306_ops = {
 	.init	= ssd1307fb_ssd1306_init,
 };
 
+static int ssd1307fb_ssd1305_init(struct ssd1307fb_par *par)
+{
+	int ret;
+
+	/* Set initial contrast */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_CONTRAST);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x80);
+	if (ret < 0)
+		return ret;
+
+	/* Set COM direction */
+	ret = ssd1307fb_write_cmd(par->client, 0xc8);
+	if (ret < 0)
+		return ret;
+
+	/* Set segment re-map */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SEG_REMAP_ON);
+	if (ret < 0)
+		return ret;
+
+	/* Set multiplex ratio value */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_MULTIPLEX_RATIO);
+	ret = ret & ssd1307fb_write_cmd(par->client, par->height - 1);
+	if (ret < 0)
+		return ret;
+
+	/* set display offset value */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_DISPLAY_OFFSET);
+	ret = ssd1307fb_write_cmd(par->client, 0x20);
+	if (ret < 0)
+		return ret;
+
+	/* Set clock frequency */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_CLOCK_FREQ);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0xf0);
+	if (ret < 0)
+		return ret;
+
+	/* Set precharge period in number of ticks from the internal clock */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_PRECHARGE_PERIOD);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x22);
+	if (ret < 0)
+		return ret;
+
+	/* Set COM pins configuration */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COM_PINS_CONFIG);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x22);
+	if (ret < 0)
+		return ret;
+
+	/* Set VCOMH */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_VCOMH);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x49);
+	if (ret < 0)
+		return ret;
+
+	/* Turn on the DC-DC Charge Pump */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_CHARGE_PUMP);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x14);
+	if (ret < 0)
+		return ret;
+
+	/* Switch to horizontal addressing mode */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_ADDRESS_MODE);
+	ret = ret & ssd1307fb_write_cmd(par->client,
+					SSD1307FB_SET_ADDRESS_MODE_HORIZONTAL);
+	if (ret < 0)
+		return ret;
+
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COL_RANGE);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x0);
+	ret = ret & ssd1307fb_write_cmd(par->client, par->width - 1);
+	if (ret < 0)
+		return ret;
+
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_PAGE_RANGE);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0x0);
+	ret = ret & ssd1307fb_write_cmd(par->client,
+					par->page_offset + (par->height / 8) - 1);
+	if (ret < 0)
+		return ret;
+
+	/* Turn on the display */
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_DISPLAY_ON);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+static struct ssd1307fb_ops ssd1307fb_ssd1305_ops = {
+	.init	= ssd1307fb_ssd1305_init,
+};
+
 static const struct of_device_id ssd1307fb_of_match[] = {
+	{
+		.compatible = "solomon,ssd1305fb-i2c",
+		.data = (void *)&ssd1307fb_ssd1305_ops,
+	},
 	{
 		.compatible = "solomon,ssd1306fb-i2c",
 		.data = (void *)&ssd1307fb_ssd1306_ops,
@@ -557,6 +655,7 @@ static int ssd1307fb_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id ssd1307fb_i2c_id[] = {
+	{ "ssd1305fb", 0 },
 	{ "ssd1306fb", 0 },
 	{ "ssd1307fb", 0 },
 	{ }
