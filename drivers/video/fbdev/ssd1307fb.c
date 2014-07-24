@@ -51,6 +51,12 @@ struct ssd1307fb_par {
 	struct fb_info *info;
 	struct ssd1307fb_ops *ops;
 	u32 page_offset;
+	u32 column_offset;
+	u32 display_offset;
+	u32 com_pins_configuration;
+	u32 com_direction;
+	u32 contrast;
+	bool segment_remap;
 	struct pwm_device *pwm;
 	u32 pwm_period;
 	int reset;
@@ -314,26 +320,26 @@ static struct ssd1307fb_ops ssd1307fb_ssd1307_ops = {
 	.remove	= ssd1307fb_ssd1307_remove,
 };
 
-static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
+static int ssd1307fb_ssd1305_ssd1306_init(struct ssd1307fb_par *par)
 {
 	int ret;
 
 	/* Set initial contrast */
 	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_CONTRAST);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x7f);
+	ret = ret & ssd1307fb_write_cmd(par->client, par->contrast);
 	if (ret < 0)
 		return ret;
 
 	/* Set COM direction */
-	ret = ssd1307fb_write_cmd(par->client, 0xc8);
+	ret = ssd1307fb_write_cmd(par->client, par->com_direction);
 	if (ret < 0)
 		return ret;
-
-	/* Set segment re-map */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SEG_REMAP_ON);
-	if (ret < 0)
-		return ret;
-
+	if (par->segment_remap) {
+		/* Set segment re-map */
+		ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SEG_REMAP_ON);
+		if (ret < 0)
+			return ret;
+	}
 	/* Set multiplex ratio value */
 	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_MULTIPLEX_RATIO);
 	ret = ret & ssd1307fb_write_cmd(par->client, par->height - 1);
@@ -342,7 +348,7 @@ static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
 
 	/* set display offset value */
 	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_DISPLAY_OFFSET);
-	ret = ssd1307fb_write_cmd(par->client, 0x20);
+	ret = ssd1307fb_write_cmd(par->client, par->display_offset);
 	if (ret < 0)
 		return ret;
 
@@ -360,7 +366,7 @@ static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
 
 	/* Set COM pins configuration */
 	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COM_PINS_CONFIG);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x22);
+	ret = ret & ssd1307fb_write_cmd(par->client, par->com_pins_configuration);
 	if (ret < 0)
 		return ret;
 
@@ -384,13 +390,14 @@ static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
 		return ret;
 
 	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COL_RANGE);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x0);
-	ret = ret & ssd1307fb_write_cmd(par->client, par->width - 1);
+	ret = ret & ssd1307fb_write_cmd(par->client, par->column_offset);
+	ret = ret & ssd1307fb_write_cmd(par->client,
+					par->column_offset + par->width - 1);
 	if (ret < 0)
 		return ret;
 
 	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_PAGE_RANGE);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x0);
+	ret = ret & ssd1307fb_write_cmd(par->client, par->page_offset);
 	ret = ret & ssd1307fb_write_cmd(par->client,
 					par->page_offset + (par->height / 8) - 1);
 	if (ret < 0)
@@ -404,112 +411,19 @@ static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
 	return 0;
 }
 
-static struct ssd1307fb_ops ssd1307fb_ssd1306_ops = {
-	.init	= ssd1307fb_ssd1306_init,
+static struct ssd1307fb_ops ssd1307fb_ssd1305_ssd1306_ops = {
+	.init	= ssd1307fb_ssd1305_ssd1306_init,
 };
 
-static int ssd1307fb_ssd1305_init(struct ssd1307fb_par *par)
-{
-	int ret;
-
-	/* Set initial contrast */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_CONTRAST);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x80);
-	if (ret < 0)
-		return ret;
-
-	/* Set COM direction */
-	ret = ssd1307fb_write_cmd(par->client, 0xc8);
-	if (ret < 0)
-		return ret;
-
-	/* Set segment re-map */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SEG_REMAP_ON);
-	if (ret < 0)
-		return ret;
-
-	/* Set multiplex ratio value */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_MULTIPLEX_RATIO);
-	ret = ret & ssd1307fb_write_cmd(par->client, par->height - 1);
-	if (ret < 0)
-		return ret;
-
-	/* set display offset value */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_DISPLAY_OFFSET);
-	ret = ssd1307fb_write_cmd(par->client, 0x20);
-	if (ret < 0)
-		return ret;
-
-	/* Set clock frequency */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_CLOCK_FREQ);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0xf0);
-	if (ret < 0)
-		return ret;
-
-	/* Set precharge period in number of ticks from the internal clock */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_PRECHARGE_PERIOD);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x22);
-	if (ret < 0)
-		return ret;
-
-	/* Set COM pins configuration */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COM_PINS_CONFIG);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x22);
-	if (ret < 0)
-		return ret;
-
-	/* Set VCOMH */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_VCOMH);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x49);
-	if (ret < 0)
-		return ret;
-
-	/* Turn on the DC-DC Charge Pump */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_CHARGE_PUMP);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x14);
-	if (ret < 0)
-		return ret;
-
-	/* Switch to horizontal addressing mode */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_ADDRESS_MODE);
-	ret = ret & ssd1307fb_write_cmd(par->client,
-					SSD1307FB_SET_ADDRESS_MODE_HORIZONTAL);
-	if (ret < 0)
-		return ret;
-
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COL_RANGE);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x0);
-	ret = ret & ssd1307fb_write_cmd(par->client, par->width - 1);
-	if (ret < 0)
-		return ret;
-
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_PAGE_RANGE);
-	ret = ret & ssd1307fb_write_cmd(par->client, 0x0);
-	ret = ret & ssd1307fb_write_cmd(par->client,
-					par->page_offset + (par->height / 8) - 1);
-	if (ret < 0)
-		return ret;
-
-	/* Turn on the display */
-	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_DISPLAY_ON);
-	if (ret < 0)
-		return ret;
-
-	return 0;
-}
-
-static struct ssd1307fb_ops ssd1307fb_ssd1305_ops = {
-	.init	= ssd1307fb_ssd1305_init,
-};
 
 static const struct of_device_id ssd1307fb_of_match[] = {
 	{
 		.compatible = "solomon,ssd1305fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1305_ops,
+		.data = (void *)&ssd1307fb_ssd1305_ssd1306_ops,
 	},
 	{
 		.compatible = "solomon,ssd1306fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1306_ops,
+		.data = (void *)&ssd1307fb_ssd1305_ssd1306_ops,
 	},
 	{
 		.compatible = "solomon,ssd1307fb-i2c",
@@ -562,6 +476,23 @@ static int ssd1307fb_probe(struct i2c_client *client,
 
 	if (of_property_read_u32(node, "solomon,page-offset", &par->page_offset))
 		par->page_offset = 1;
+
+	if (of_property_read_u32(node, "solomon,column-offset", &par->column_offset))
+		par->column_offset = 0;
+
+	if (of_property_read_u32(node, "solomon,display-offset", &par->display_offset))
+		par->display_offset = 0x20;
+
+	if (of_property_read_u32(node, "solomon,com-pins-configuration", &par->com_pins_configuration))
+		par->com_pins_configuration = 0x22;
+
+	if (of_property_read_u32(node, "solomon,com-direction", &par->com_direction))
+		par->com_direction = 0xc8;
+
+	if (of_property_read_u32(node, "solomon,contrast", &par->contrast))
+		par->contrast = 0x7F;
+
+	par->segment_remap = of_property_read_bool(node, "solomon,segment-remap");
 
 	vmem_size = par->width * par->height / 8;
 

@@ -197,6 +197,11 @@
 		solomon,height = <32>;
 		solomon,width = <128>;
 		solomon,page-offset = <0>;
+		solomon,column-offset = <2>;
+		solomon,com-pins-configuration = <0x12>;
+		solomon,display-offset = <0>;
+		solomon,com-direction = <0xC0>;
+		solomon,contrast = <0x80>;
 		status = "okay";
 		reset-gpios = <&gpio6 9 1>;
 	};
