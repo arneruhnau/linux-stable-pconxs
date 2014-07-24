@@ -198,7 +198,7 @@
 		solomon,width = <128>;
 		solomon,page-offset = <0>;
 		status = "okay";
-		reset-gpio = <&gpio6 9 1>;
+		reset-gpios = <&gpio6 9 1>;
 	};
 	pmic: pfuze100@08 {
 		compatible = "fsl,pfuze100";
