@@ -31,6 +31,8 @@
 
 #include <linux/fs.h>
 
+#include "pcie_registers.h"
+
 #define TARGET_FPGA_DRIVER_NAME "Target FPGA"
 #define PCI_VENDOR_ID_TARGET 0x1172
 #define PCI_DEVICE_ID_TARGET_FPGA 0x0004
@@ -41,11 +43,70 @@ static unsigned int pagecount = 1;
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
 module_param(pagecount, int, S_IRUGO);
- 
+
+static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u32 ram_base, u32 size)
+{
+        /* Program viewport 0 : INBOUND : MEM */
+	
+        pci_write_config_dword(dev, PCIE_ATU_VIEWPORT,		PCIE_ATU_REGION_INBOUND |
+								PCIE_ATU_REGION_INDEX0);
+        pci_write_config_dword(dev, PCIE_ATU_LOWER_BASE, 	fpga_base);
+        pci_write_config_dword(dev, PCIE_ATU_UPPER_BASE, 	fpga_base >> 32);
+        pci_write_config_dword(dev, PCIE_ATU_LIMIT, 		fpga_base + size - 1);
+        pci_write_config_dword(dev, PCIE_ATU_LOWER_TARGET, 	ram_base);
+        pci_write_config_dword(dev, PCIE_ATU_UPPER_TARGET, 	ram_base + size - 1);
+        pci_write_config_dword(dev, PCIE_ATU_CR1, 		PCIE_ATU_TYPE_MEM);
+        pci_write_config_dword(dev, PCIE_ATU_CR2, 		PCIE_ATU_ENABLE);
+
+	dev_info(&dev->dev, 
+		"Viewpoint:\nFPGA-Start: 0x%08X\n"
+		"FPGA-End: 0x%08X\n" 
+		"Ram-Start: 0x%08X\n" 
+		"Ram-End: 0x%08X\n",
+		fpga_base,
+		fpga_base + size - 1,
+		ram_base,
+		ram_base + size - 1
+	);
+}
+
+static struct page *cma_pages;
+
+static void fpga_release_cma_pages(struct pci_dev *dev) {
+	if(cma_pages) {
+		if(!dma_release_from_contiguous(&dev->dev, cma_pages, pagecount))
+			dev_err(&dev->dev, "Could not release cma pages\n");
+		else
+			dev_info(&dev->dev, "Released %d pages from contiguous\n", pagecount);
+	}
+}
+
+static bool fpga_allocate_cma_pages(struct pci_dev *dev) {
+	if(dev_get_cma_area(&dev->dev) == NULL)
+	{
+		dev_err(&dev->dev, "CMA area not supported\n");
+		return false;
+	}
+	else {
+		cma_pages = dma_alloc_from_contiguous(&dev->dev, pagecount, 8); // 8 = 2^8 == 256-page-alignment
+		if(cma_pages) {
+			dev_info(&dev->dev, "Allocated %d pages from contiguous\n", pagecount);
+			return true;
+		}
+		else {
+			dev_err(&dev->dev, "Could not alloc cma pages");
+			return false;
+		}
+	}
+}
 
 static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id) {
-	u32 config_value = 0x0;
 	int ret = 0;
+	struct pci_dev *root_complex = dev;
+
+	while(!pci_is_root_bus(root_complex->bus)) {
+		root_complex = root_complex->bus->self;
+	}
 	if ((dev->vendor == vid) && (dev->device == did)) 
 	{
 		ret = pci_enable_device(dev);
@@ -61,31 +122,10 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 			dev_err(&dev->dev, "pci_request_regions() failed\n");
 			return ret;
 		}
-		ret = pci_read_config_dword(dev, 0x018, &config_value);
-		if (ret)
-			dev_err(&dev->dev, "pci_read_config_dword failed: 0x%04X\n", ret);
-		else
-			dev_info(&dev->dev, "0x018: 0x%04X\n", config_value);
-
-		if(dev_get_cma_area(&dev->dev) == NULL)
-		{
-			dev_err(&dev->dev, "CMA area not supported\n");
-		}
-		else {
-
-			struct page* cma_pages = dma_alloc_from_contiguous(&dev->dev, pagecount, 8); // 8 = 2^8 == 256-page-alignment
-			if(cma_pages) {
-				dev_info(&dev->dev, "Allocated %d pages from contiguous\n", pagecount);
-				if(!dma_release_from_contiguous(&dev->dev, cma_pages, pagecount))
-					dev_err(&dev->dev, "Could not release cma pages\n");
-				else
-					dev_info(&dev->dev, "Released %d pages from contiguous\n", pagecount);
-			}
-			else {
-				dev_err(&dev->dev, "Could not alloc cma pages");
-			}
-}
-		
+		pci_set_master(dev);
+		if(fpga_allocate_cma_pages(dev))	
+			dw_pcie_prog_viewport_inbound0(root_complex, 0x00000000, page_to_phys(cma_pages), 
+						PAGE_SIZE * pagecount);
 		return 0;
 	}
 	else {
@@ -96,6 +136,8 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 }
 
 static void fpga_driver_remove(struct pci_dev *dev) {
+	pci_clear_master(dev);
+	fpga_release_cma_pages(dev);
         pci_disable_device(dev);
         pci_release_regions(dev);
 	return;
