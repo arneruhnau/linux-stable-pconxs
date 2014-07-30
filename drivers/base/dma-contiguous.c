@@ -27,6 +27,7 @@
 #include <linux/sizes.h>
 #include <linux/dma-contiguous.h>
 #include <linux/cma.h>
+#include <linux/export.h>
 
 #ifdef CONFIG_CMA_SIZE_MBYTES
 #define CMA_SIZE_MBYTES CONFIG_CMA_SIZE_MBYTES
@@ -35,6 +36,7 @@
 #endif
 
 struct cma *dma_contiguous_default_area;
+EXPORT_SYMBOL_GPL(dma_contiguous_default_area);
 
 /*
  * Default global CMA area size can be defined in kernel's .config.
@@ -195,6 +197,7 @@ struct page *dma_alloc_from_contiguous(struct device *dev, int count,
 
 	return cma_alloc(dev_get_cma_area(dev), count, align);
 }
+EXPORT_SYMBOL_GPL(dma_alloc_from_contiguous);
 
 /**
  * dma_release_from_contiguous() - release allocated pages
@@ -211,3 +214,4 @@ bool dma_release_from_contiguous(struct device *dev, struct page *pages,
 {
 	return cma_release(dev_get_cma_area(dev), pages, count);
 }
+EXPORT_SYMBOL_GPL(dma_release_from_contiguous);
