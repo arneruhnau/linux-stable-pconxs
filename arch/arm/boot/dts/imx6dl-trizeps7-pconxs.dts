@@ -202,7 +202,7 @@
 		solomon,display-offset = <0>;
 		solomon,com-direction = <0xC0>;
 		solomon,contrast = <0x80>;
-		status = "okay";
+		status = "disabled";
 		reset-gpios = <&gpio6 9 1>;
 	};
 	pmic: pfuze100@08 {
