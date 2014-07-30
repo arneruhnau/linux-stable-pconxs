@@ -44,7 +44,7 @@ module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
 module_param(pagecount, int, S_IRUGO);
 
-static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u32 ram_base, u32 size)
+static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u64 ram_base, u64 size)
 {
         /* Program viewport 0 : INBOUND : MEM */
 	
@@ -59,10 +59,13 @@ static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u
         pci_write_config_dword(dev, PCIE_ATU_CR2, 		PCIE_ATU_ENABLE);
 
 	dev_info(&dev->dev, 
-		"Viewpoint:\nFPGA-Start: 0x%08X\n"
-		"FPGA-End: 0x%08X\n" 
-		"Ram-Start: 0x%08X\n" 
-		"Ram-End: 0x%08X\n",
+		"Viewpoint:\n"
+		"Size:\t\t0x%016llX\n"
+		"FPGA-Start:\t0x%016llX\n"
+		"FPGA-End:\t0x%016llX\n" 
+		"Ram-Start:\t0x%016llX\n" 
+		"Ram-End:\t0x%016llX\n",
+		size,
 		fpga_base,
 		fpga_base + size - 1,
 		ram_base,
