@@ -37,8 +37,10 @@
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
+static unsigned int pagecount = 1;
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
+module_param(pagecount, int, S_IRUGO);
  
 
 static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id) {
@@ -71,11 +73,13 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 		}
 		else {
 
-			int count = 1;
-			struct page* cma_pages = dma_alloc_from_contiguous(&dev->dev, count, 8); // 8 = 2^8 == 256-page-alignment
+			struct page* cma_pages = dma_alloc_from_contiguous(&dev->dev, pagecount, 8); // 8 = 2^8 == 256-page-alignment
 			if(cma_pages) {
-				if(!dma_release_from_contiguous(&dev->dev, cma_pages, count))
+				dev_info(&dev->dev, "Allocated %d pages from contiguous\n", pagecount);
+				if(!dma_release_from_contiguous(&dev->dev, cma_pages, pagecount))
 					dev_err(&dev->dev, "Could not release cma pages\n");
+				else
+					dev_info(&dev->dev, "Released %d pages from contiguous\n", pagecount);
 			}
 			else {
 				dev_err(&dev->dev, "Could not alloc cma pages");
