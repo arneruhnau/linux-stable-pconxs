@@ -21,6 +21,8 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
+#include <linux/irq.h>
+#include <linux/irqdomain.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-contiguous.h>
 #include <uapi/linux/pci_regs.h>
@@ -31,6 +33,7 @@
 
 #include <linux/fs.h>
 
+#include "../pci/host/pcie-designware.h"
 #include "pcie_registers.h"
 
 #define TARGET_FPGA_DRIVER_NAME "Target FPGA"
@@ -103,6 +106,23 @@ static bool fpga_allocate_cma_pages(struct pci_dev *dev) {
 	}
 }
 
+static inline int fpga_get_msi_bit_irq(struct pci_dev *dev, int pos) {
+	struct pci_sys_data *sys = dev->bus->sysdata;
+	struct pcie_port *pp = sys->private_data;
+	return irq_find_mapping(pp->irq_domain, pos);
+}
+
+static void fpga_setup_irq(struct pci_dev *dev) {
+	int pos = 0;
+	for(;pos < 32; ++pos) {
+		int irq = fpga_get_msi_bit_irq(dev, pos);
+		if(!irq)
+			dev_err(&dev->dev, "Could not get IRQ for MSI bit %d, got %d instead\n", pos, irq);		
+		else
+			dev_info(&dev->dev, "Got IRQ %d for bit %d\n", irq, pos);
+	}
+}
+
 static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id) {
 	int ret = 0;
 	struct pci_dev *root_complex = dev;
@@ -125,6 +145,7 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 			dev_err(&dev->dev, "pci_request_regions() failed\n");
 			return ret;
 		}
+		fpga_setup_irq(dev);
 		pci_set_master(dev);
 		if(fpga_allocate_cma_pages(dev))	
 			dw_pcie_prog_viewport_inbound0(root_complex, 0x00000000, page_to_phys(cma_pages), 
