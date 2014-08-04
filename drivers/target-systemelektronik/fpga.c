@@ -42,17 +42,20 @@
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
-static unsigned int pagecount = 1;
+static unsigned int data_pagecount = 1;
+static unsigned int count_pagecount = 1;
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
-module_param(pagecount, int, S_IRUGO);
+module_param(data_pagecount, int, S_IRUGO);
+module_param(count_pagecount, int, S_IRUGO);
 
-static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u64 ram_base, u64 size)
+static struct page *data_pages;
+static struct page *count_pages;
+
+static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
-        /* Program viewport 0 : INBOUND : MEM */
-	
         pci_write_config_dword(dev, PCIE_ATU_VIEWPORT,		PCIE_ATU_REGION_INBOUND |
-								PCIE_ATU_REGION_INDEX0);
+								viewport);
         pci_write_config_dword(dev, PCIE_ATU_LOWER_BASE, 	fpga_base);
         pci_write_config_dword(dev, PCIE_ATU_UPPER_BASE, 	fpga_base >> 32);
         pci_write_config_dword(dev, PCIE_ATU_LIMIT, 		fpga_base + size - 1);
@@ -62,12 +65,13 @@ static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u
         pci_write_config_dword(dev, PCIE_ATU_CR2, 		PCIE_ATU_ENABLE);
 
 	dev_info(&dev->dev, 
-		"Viewpoint:\n"
+		"Viewpoint:\t0x%04X\n"
 		"Size:\t\t0x%016llX\n"
 		"FPGA-Start:\t0x%016llX\n"
 		"FPGA-End:\t0x%016llX\n" 
 		"Ram-Start:\t0x%016llX\n" 
 		"Ram-End:\t0x%016llX\n",
+		viewport,
 		size,
 		fpga_base,
 		fpga_base + size - 1,
@@ -76,34 +80,67 @@ static void dw_pcie_prog_viewport_inbound0(struct pci_dev *dev, u64 fpga_base, u
 	);
 }
 
-static struct page *cma_pages;
+static void dw_pcie_prog_viewports_inbound(struct pci_dev *dev)
+{
+	struct pci_dev *root_complex = dev;
 
-static void fpga_release_cma_pages(struct pci_dev *dev) {
-	if(cma_pages) {
-		if(!dma_release_from_contiguous(&dev->dev, cma_pages, pagecount))
-			dev_err(&dev->dev, "Could not release cma pages\n");
+	while(!pci_is_root_bus(root_complex->bus)) {
+		root_complex = root_complex->bus->self;
+	}
+	_dw_pcie_prog_viewport_inbound(
+		root_complex, 
+		PCIE_ATU_REGION_INDEX0,
+		0, 
+		page_to_phys(data_pages),
+		PAGE_SIZE * data_pagecount
+	);
+	_dw_pcie_prog_viewport_inbound(
+		root_complex, 
+		PCIE_ATU_REGION_INDEX1,
+		PAGE_SIZE * data_pagecount, 
+		page_to_phys(count_pages),
+		PAGE_SIZE * count_pagecount
+	);
+}
+
+static void _fpga_release_pages(struct pci_dev *dev, struct page *pages, int count)
+{
+	if(pages) {
+		if(!dma_release_from_contiguous(&dev->dev, pages, count))
+			dev_err(&dev->dev, "Could not release pages\n");
 		else
-			dev_info(&dev->dev, "Released %d pages from contiguous\n", pagecount);
+			dev_info(&dev->dev, "Released %d pages from contiguous\n", count);
 	}
 }
 
-static bool fpga_allocate_cma_pages(struct pci_dev *dev) {
+static void fpga_release_pages(struct pci_dev *dev) {
+	_fpga_release_pages(dev, data_pages, data_pagecount);
+	_fpga_release_pages(dev, count_pages, count_pagecount);
+}
+
+static bool _fpga_allocate_pages(struct pci_dev *dev, struct page **ppages, int count) {
 	if(dev_get_cma_area(&dev->dev) == NULL)
 	{
 		dev_err(&dev->dev, "CMA area not supported\n");
 		return false;
 	}
 	else {
-		cma_pages = dma_alloc_from_contiguous(&dev->dev, pagecount, 8); // 8 = 2^8 == 256-page-alignment
-		if(cma_pages) {
-			dev_info(&dev->dev, "Allocated %d pages from contiguous\n", pagecount);
+		*ppages = dma_alloc_from_contiguous(&dev->dev, count, 8); // 8 = 2^8 == 256-page-alignment
+		if(*ppages)
 			return true;
-		}
 		else {
-			dev_err(&dev->dev, "Could not alloc cma pages");
+			dev_err(&dev->dev, "Could not alloc %d cma pages", count);
 			return false;
 		}
 	}
+}
+
+static bool fpga_allocate_pages(struct pci_dev *dev) {
+	bool ret = _fpga_allocate_pages(dev, &data_pages, data_pagecount);
+	if(!ret)
+		return ret;
+	ret = _fpga_allocate_pages(dev, &count_pages, count_pagecount);
+		return ret;
 }
 
 static inline int fpga_get_msi_bit_irq(struct pci_dev *dev, int pos) {
@@ -125,11 +162,6 @@ static void fpga_setup_irq(struct pci_dev *dev) {
 
 static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id) {
 	int ret = 0;
-	struct pci_dev *root_complex = dev;
-
-	while(!pci_is_root_bus(root_complex->bus)) {
-		root_complex = root_complex->bus->self;
-	}
 	if ((dev->vendor == vid) && (dev->device == did)) 
 	{
 		ret = pci_enable_device(dev);
@@ -147,10 +179,13 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 		}
 		fpga_setup_irq(dev);
 		pci_set_master(dev);
-		if(fpga_allocate_cma_pages(dev))	
-			dw_pcie_prog_viewport_inbound0(root_complex, 0x00000000, page_to_phys(cma_pages), 
-						PAGE_SIZE * pagecount);
-		return 0;
+		if(fpga_allocate_pages(dev))	
+		{
+			dw_pcie_prog_viewports_inbound(dev);
+			return 0;
+		}
+		else
+			return -ENOMEM;
 	}
 	else {
 		dev_err(&dev->dev, "This PCI device does not match "
@@ -161,7 +196,7 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 
 static void fpga_driver_remove(struct pci_dev *dev) {
 	pci_clear_master(dev);
-	fpga_release_cma_pages(dev);
+	fpga_release_pages(dev);
         pci_disable_device(dev);
         pci_release_regions(dev);
 	return;
