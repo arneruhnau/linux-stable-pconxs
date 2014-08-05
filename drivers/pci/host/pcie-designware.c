@@ -67,6 +67,8 @@
 #define PCIE_ATU_FUNC(x)		(((x) & 0x7) << 16)
 #define PCIE_ATU_UPPER_TARGET		0x91C
 
+static int target_increase_payload(struct pcie_port *pp);
+
 static struct hw_pci dw_pci;
 
 static unsigned long global_io_offset;
@@ -505,7 +507,6 @@ int __init dw_pcie_host_init(struct pcie_port *pp)
 #ifdef CONFIG_PCI_DOMAINS
 	dw_pci.domain++;
 #endif
-
 	return 0;
 }
 
@@ -830,7 +831,22 @@ void dw_pcie_setup_rc(struct pcie_port *pp)
 	val |= PCI_COMMAND_IO | PCI_COMMAND_MEMORY |
 		PCI_COMMAND_MASTER | PCI_COMMAND_SERR;
 	dw_pcie_writel_rc(pp, val, PCI_COMMAND);
+	target_increase_payload(pp);
 }
+
+static int target_increase_payload(struct pcie_port *pp)
+{
+	#define PCIE_CAPABILITIES_OFFSET 0x70
+	#define PCI_EXP_DEVCAP 4
+	#define PCI_EXP_DEVCAP_PAYLOAD 0x00000007
+	u32 reg;
+	dw_pcie_rd_own_conf(pp, PCIE_CAPABILITIES_OFFSET + PCI_EXP_DEVCAP, 2, &reg);
+	reg = reg & ~PCI_EXP_DEVCAP_PAYLOAD;
+	reg = reg | (0x4 & PCI_EXP_DEVCAP_PAYLOAD); // 2 KB
+	dw_pcie_wr_own_conf(pp, PCIE_CAPABILITIES_OFFSET + PCI_EXP_DEVCAP, 2, reg);
+	return 0;
+}
+
 
 MODULE_AUTHOR("Jingoo Han <jg1.han@samsung.com>");
 MODULE_DESCRIPTION("Designware PCIe host controller driver");
