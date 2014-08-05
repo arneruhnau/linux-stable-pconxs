@@ -21,6 +21,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
+#include <linux/aer.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
 #include <linux/dma-mapping.h>
@@ -186,6 +187,10 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 		}
 		else
 			return -ENOMEM;
+		if(pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR))
+			ret = pci_enable_pcie_error_reporting(dev);
+		else
+			dev_info(&dev->dev, "AER not supported\n");
 	}
 	else {
 		dev_err(&dev->dev, "This PCI device does not match "
@@ -196,6 +201,7 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 
 static void fpga_driver_remove(struct pci_dev *dev) {
 	pci_clear_master(dev);
+	pci_disable_pcie_error_reporting(dev);
 	fpga_release_pages(dev);
         pci_disable_device(dev);
         pci_release_regions(dev);
