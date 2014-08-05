@@ -24,9 +24,12 @@
 #include <linux/aer.h>
 #include <linux/irq.h>
 #include <linux/irqdomain.h>
+#include <linux/irqreturn.h>
+#include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-contiguous.h>
 #include <uapi/linux/pci_regs.h>
+#include <uapi/linux/if.h>
 
 #include <linux/cdev.h>
 #include <asm/uaccess.h>
@@ -34,7 +37,6 @@
 
 #include <linux/fs.h>
 
-#include "../pci/host/pcie-designware.h"
 #include "pcie_registers.h"
 
 #define TARGET_FPGA_DRIVER_NAME "Target FPGA"
@@ -52,6 +54,8 @@ module_param(count_pagecount, int, S_IRUGO);
 
 static struct page *data_pages;
 static struct page *count_pages;
+static int interrupts_available;
+
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
@@ -144,53 +148,78 @@ static bool fpga_allocate_pages(struct pci_dev *dev) {
 		return ret;
 }
 
-static inline int fpga_get_msi_bit_irq(struct pci_dev *dev, int pos) {
-	struct pci_sys_data *sys = dev->bus->sysdata;
-	struct pcie_port *pp = sys->private_data;
-	return irq_find_mapping(pp->irq_domain, pos);
+static irqreturn_t handle_msi_interrupt(int irq, void *data) {
+	struct pci_dev *dev = data;
+	dev_err(&dev->dev, "IRQ %d\n", irq);
+	return IRQ_HANDLED;
 }
 
-static void fpga_setup_irq(struct pci_dev *dev) {
-	int pos = 0;
-	for(;pos < 32; ++pos) {
-		int irq = fpga_get_msi_bit_irq(dev, pos);
-		if(!irq)
-			dev_err(&dev->dev, "Could not get IRQ for MSI bit %d, got %d instead\n", pos, irq);		
-		else
-			dev_info(&dev->dev, "Got IRQ %d for bit %d\n", irq, pos);
+static int fpga_setup_irq(struct pci_dev *dev) {
+	int irq;
+	int end;
+	int ret;
+	char *name = "fpga-msi";
+
+	interrupts_available = pci_enable_msi_range(dev, 1, 4);
+	if(interrupts_available < 0)
+	{
+		dev_err(&dev->dev, "Could not request msi range [1,4]\n");
+		return interrupts_available;
 	}
+	dev_info(&dev->dev, "Enabled %d interrupts\n", interrupts_available);
+	end = dev->irq + interrupts_available - 1;
+	for(irq = dev->irq; irq <= end; ++irq)
+	{
+		snprintf(name, IFNAMSIZ, "fpga-msi-%d", irq);
+		name[IFNAMSIZ-1] = 0;
+		ret = devm_request_irq( &dev->dev, irq, handle_msi_interrupt, 0, name, dev);
+		if(ret) {
+			dev_err(&dev->dev, "Failed to request irq %d\n", irq);
+			return ret;
+		}
+	}
+	return 0;
+}
+
+static void fpga_teardown_irq(struct pci_dev *dev)
+{
+	int irq;
+	int end = dev->irq + interrupts_available - 1;
+	for(irq = dev->irq; irq <= end; ++irq)
+		devm_free_irq(&dev->dev, irq, dev);
+	pci_disable_msi(dev);
 }
 
 static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id) {
 	int ret = 0;
 	if ((dev->vendor == vid) && (dev->device == did)) 
 	{
-		ret = pci_enable_device(dev);
+		ret = pcim_enable_device(dev);
 		if (ret) {
 			dev_err(&dev->dev, "pci_enable_device() failed\n");
 			return ret;
 		}
 		dev_info(&dev->dev, "Found and enabled PCI device with "
 					"VID 0x%04X, DID 0x%04X\n", vid, did);
-		ret = pci_request_regions(dev, TARGET_FPGA_DRIVER_NAME);
+		ret = pcim_iomap_regions(dev, 0, TARGET_FPGA_DRIVER_NAME);
 		if(ret)
 		{
-			dev_err(&dev->dev, "pci_request_regions() failed\n");
+			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
 		}
-		fpga_setup_irq(dev);
-		pci_set_master(dev);
-		if(fpga_allocate_pages(dev))	
-		{
-			dw_pcie_prog_viewports_inbound(dev);
-			return 0;
-		}
-		else
+		if(!fpga_allocate_pages(dev))	
 			return -ENOMEM;
+		dw_pcie_prog_viewports_inbound(dev);
+		ret = fpga_setup_irq(dev);
+		if(ret)
+			return ret;
 		if(pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR))
 			ret = pci_enable_pcie_error_reporting(dev);
 		else
 			dev_info(&dev->dev, "AER not supported\n");
+
+		pci_set_master(dev);
+		return ret;
 	}
 	else {
 		dev_err(&dev->dev, "This PCI device does not match "
@@ -202,9 +231,8 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 static void fpga_driver_remove(struct pci_dev *dev) {
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
+	fpga_teardown_irq(dev);
 	fpga_release_pages(dev);
-        pci_disable_device(dev);
-        pci_release_regions(dev);
 	return;
 }
 
