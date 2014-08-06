@@ -20,6 +20,9 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/stat.h>
+#include <linux/sysfs.h>
+#include <linux/device.h>
 #include <linux/pci.h>
 #include <linux/aer.h>
 #include <linux/irq.h>
@@ -36,6 +39,8 @@
 #include <linux/slab.h>
 
 #include <linux/fs.h>
+
+#include <linux/highmem.h>
 
 #include "pcie_registers.h"
 
@@ -54,8 +59,38 @@ module_param(count_pagecount, int, S_IRUGO);
 
 static struct page *data_pages;
 static struct page *count_pages;
+static int count_counter;
 static int interrupts_available;
 
+static void add_new_event_count(u32 val)
+{
+	u32 *buffer = (u32 *)kmap(count_pages);
+	buffer[count_counter++] = val;
+	kunmap(count_pages);
+	count_counter = count_counter % (count_pagecount * PAGE_SIZE / sizeof(u32));
+}
+
+static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf)
+{
+	u32 val;
+	u32 *buffer = (u32 *)kmap(count_pages);
+	int last = count_counter - 1;
+	last = last % (count_pagecount * PAGE_SIZE / sizeof(u32));
+	val = buffer[last];
+	kunmap(count_pages);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+
+static ssize_t events_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
+{
+	u32 val;
+	if(kstrtou32(buf, 0, &val))
+		return -EINVAL;
+	add_new_event_count(val);
+	return count;
+}
+
+static DEVICE_ATTR_RW(events);
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
@@ -219,6 +254,7 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 			dev_info(&dev->dev, "AER not supported\n");
 
 		pci_set_master(dev);
+		device_create_file(&dev->dev, &dev_attr_events);
 		return ret;
 	}
 	else {
@@ -229,6 +265,7 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 }
 
 static void fpga_driver_remove(struct pci_dev *dev) {
+	device_remove_file(&dev->dev, &dev_attr_events);
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
