@@ -66,44 +66,69 @@ static int interrupts_available;
 // NOTE: Change locking to _irqsave/_irqrestore once we run in interrupt context
 static DEFINE_SPINLOCK(count_counter_lock);
 
-static void add_new_event_count(u32 val)
+static void get_count_segment(int absolute_index, int* relative_index, struct page** target_page)
 {
-	u32 *buffer;
-	int i, n;
-	struct page *target_page;
+	int n = absolute_index / (PAGE_SIZE / sizeof(u32));
+	*relative_index = absolute_index - (n * PAGE_SIZE / sizeof(u32));
+	*target_page = nth_page(count_pages, n);
+}
 
+static inline int increment_count_counter(void)
+{
+	int i;
 	spin_lock(&count_counter_lock);
 	i = count_counter;
 	count_counter = (i + 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
 	spin_unlock(&count_counter_lock);
+	return i;
+}
 
-	n = i / (PAGE_SIZE / sizeof(u32));
-	i = i - (n * PAGE_SIZE / sizeof(u32));
-	target_page = nth_page(count_pages, n);
+static inline int current_count_counter(void)
+{
+	int i;
+	spin_lock(&count_counter_lock);
+	i = (count_counter - 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
+	spin_unlock(&count_counter_lock);
+	return i;
+}
+
+static inline void write_count(struct page *target_page, int index, u32 val)
+{
+	u32 *buffer = (u32 *)kmap(target_page);
+	buffer[index] = val;
+	kunmap(target_page);
+}
+
+static inline u32 read_count(struct page *target_page, int index)
+{
+	u32 ret;
+	u32 *buffer;
 
 	buffer = (u32 *)kmap(target_page);
-	buffer[i] = val;
+	ret = buffer[index];
 	kunmap(target_page);
+	return ret;
+}
+
+static void add_new_event_count(u32 val)
+{
+	int i;
+	struct page *target_page;
+
+	i = increment_count_counter();
+	get_count_segment(i, &i, &target_page);
+	write_count(target_page, i, val);
 }
 
 static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf)
 {
 	u32 val;
-	u32 *buffer;
-	int i, n;
+	int i;
 	struct page *target_page;
 
-	spin_lock(&count_counter_lock);
-	i = (count_counter - 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
-	spin_unlock(&count_counter_lock);
-
-	n = i / (PAGE_SIZE / sizeof(u32));
-	i = i - (n * PAGE_SIZE / sizeof(u32));
-
-	target_page = nth_page(count_pages, n);
-	buffer = (u32 *)kmap(target_page);
-	val = buffer[i];
-	kunmap(target_page);
+	i = current_count_counter();
+	get_count_segment(i, &i, &target_page);
+	val = read_count(target_page, i);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
 }
 
