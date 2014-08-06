@@ -69,31 +69,41 @@ static DEFINE_SPINLOCK(count_counter_lock);
 static void add_new_event_count(u32 val)
 {
 	u32 *buffer;
-	int i;
+	int i, n;
+	struct page *target_page;
 
 	spin_lock(&count_counter_lock);
 	i = count_counter;
 	count_counter = (i + 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
 	spin_unlock(&count_counter_lock);
 
-	buffer = (u32 *)kmap(count_pages);
+	n = i / (PAGE_SIZE / sizeof(u32));
+	i = i - (n * PAGE_SIZE / sizeof(u32));
+	target_page = nth_page(count_pages, n);
+
+	buffer = (u32 *)kmap(target_page);
 	buffer[i] = val;
-	kunmap(count_pages);
+	kunmap(target_page);
 }
 
 static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf)
 {
 	u32 val;
 	u32 *buffer;
-	int i;
+	int i, n;
+	struct page *target_page;
 
 	spin_lock(&count_counter_lock);
 	i = (count_counter - 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
 	spin_unlock(&count_counter_lock);
 
-	buffer = (u32 *)kmap(count_pages);
+	n = i / (PAGE_SIZE / sizeof(u32));
+	i = i - (n * PAGE_SIZE / sizeof(u32));
+
+	target_page = nth_page(count_pages, n);
+	buffer = (u32 *)kmap(target_page);
 	val = buffer[i];
-	kunmap(count_pages);
+	kunmap(target_page);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
 }
 
