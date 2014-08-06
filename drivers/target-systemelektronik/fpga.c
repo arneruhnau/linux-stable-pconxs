@@ -41,6 +41,7 @@
 #include <linux/fs.h>
 
 #include <linux/highmem.h>
+#include <linux/spinlock.h>
 
 #include "pcie_registers.h"
 
@@ -62,21 +63,36 @@ static struct page *count_pages;
 static int count_counter;
 static int interrupts_available;
 
+// NOTE: Change locking to _irqsave/_irqrestore once we run in interrupt context
+static DEFINE_SPINLOCK(count_counter_lock);
+
 static void add_new_event_count(u32 val)
 {
-	u32 *buffer = (u32 *)kmap(count_pages);
-	buffer[count_counter++] = val;
+	u32 *buffer;
+	int i;
+
+	spin_lock(&count_counter_lock);
+	i = count_counter;
+	count_counter = (i + 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
+	spin_unlock(&count_counter_lock);
+
+	buffer = (u32 *)kmap(count_pages);
+	buffer[i] = val;
 	kunmap(count_pages);
-	count_counter = count_counter % (count_pagecount * PAGE_SIZE / sizeof(u32));
 }
 
 static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf)
 {
 	u32 val;
-	u32 *buffer = (u32 *)kmap(count_pages);
-	int last = count_counter - 1;
-	last = last % (count_pagecount * PAGE_SIZE / sizeof(u32));
-	val = buffer[last];
+	u32 *buffer;
+	int i;
+
+	spin_lock(&count_counter_lock);
+	i = (count_counter - 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
+	spin_unlock(&count_counter_lock);
+
+	buffer = (u32 *)kmap(count_pages);
+	val = buffer[i];
 	kunmap(count_pages);
 	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
 }
