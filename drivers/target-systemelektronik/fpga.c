@@ -61,6 +61,8 @@ module_param(count_pagecount, int, S_IRUGO);
 static struct page *data_pages;
 static struct page *count_pages;
 static int count_counter;
+static int first_unread_count;
+static int unread_counts;
 static int interrupts_available;
 
 // NOTE: Change locking to _irqsave/_irqrestore once we run in interrupt context
@@ -73,21 +75,18 @@ static void get_count_segment(int absolute_index, int* relative_index, struct pa
 	*target_page = nth_page(count_pages, n);
 }
 
+static inline int __to_count_counter(int val) {
+	return val % (count_pagecount * PAGE_SIZE / sizeof(u32));
+}
+
 static inline int increment_count_counter(void)
 {
 	int i;
 	spin_lock(&count_counter_lock);
 	i = count_counter;
-	count_counter = (i + 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
-	spin_unlock(&count_counter_lock);
-	return i;
-}
-
-static inline int current_count_counter(void)
-{
-	int i;
-	spin_lock(&count_counter_lock);
-	i = (count_counter - 1) % (count_pagecount * PAGE_SIZE / sizeof(u32));
+	if(!unread_counts++)
+		first_unread_count = count_counter;
+	count_counter = __to_count_counter(i + 1);
 	spin_unlock(&count_counter_lock);
 	return i;
 }
@@ -122,14 +121,23 @@ static void add_new_event_count(u32 val)
 
 static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf)
 {
-	u32 val;
 	int i;
+	int j;
+	u32 val;
+	int chars_written = 0;
 	struct page *target_page;
 
-	i = current_count_counter();
-	get_count_segment(i, &i, &target_page);
-	val = read_count(target_page, i);
-	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+	spin_lock(&count_counter_lock);
+	for(i = 0; i < unread_counts; ++i)
+	{
+		j = __to_count_counter(first_unread_count + i);
+		get_count_segment(j, &j, &target_page);
+		val = read_count(target_page, j);
+		chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%d\n", val);
+	}
+	unread_counts = 0;
+	spin_unlock(&count_counter_lock);
+	return chars_written;
 }
 
 static ssize_t events_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
