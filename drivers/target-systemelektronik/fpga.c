@@ -166,7 +166,7 @@ static ssize_t data_ringbuffer_show(struct device *dev, struct attribute *attr, 
 		val = ringbuffer_read_u32(target_page, j);
 		chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%d,", val);
 	}
-	chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%s", "\n");
+	buf[chars_written - 1] = '\n';
 	return chars_written;
 }
 
