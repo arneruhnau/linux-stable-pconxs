@@ -75,8 +75,19 @@ static void get_count_segment(int absolute_index, int* relative_index, struct pa
 	*target_page = nth_page(count_pages, n);
 }
 
+static void get_data_segment(int absolute_index, int* relative_index, struct page** target_page)
+{
+	int n = absolute_index / (PAGE_SIZE / sizeof(u32));
+	*relative_index = absolute_index - (n * PAGE_SIZE / sizeof(u32));
+	*target_page = nth_page(data_pages, n);
+}
+
 static inline int __to_count_counter(int val) {
 	return val % (count_pagecount * PAGE_SIZE / sizeof(u32));
+}
+
+static inline int __to_data_counter(int val) {
+	return val % (data_pagecount * PAGE_SIZE / sizeof(u32));
 }
 
 static inline int increment_count_counter(void)
@@ -98,16 +109,18 @@ static inline void write_count(struct page *target_page, int index, u32 val)
 	kunmap(target_page);
 }
 
-static inline u32 read_count(struct page *target_page, int index)
-{
-	u32 ret;
-	u32 *buffer;
-
-	buffer = (u32 *)kmap(target_page);
-	ret = buffer[index];
-	kunmap(target_page);
-	return ret;
+#define RINGBUFFER_READ(type) \
+static inline type ringbuffer_read_##type(struct page *target_page, int index) \
+{ \
+	type ret; \
+	type *buffer; \
+	buffer = (u32 *)kmap(target_page); \
+	ret = buffer[index]; \
+	kunmap(target_page); \
+	return ret; \
 }
+
+RINGBUFFER_READ(u32)
 
 static void add_new_event_count(u32 val)
 {
@@ -119,7 +132,26 @@ static void add_new_event_count(u32 val)
 	write_count(target_page, i, val);
 }
 
-static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf)
+static ssize_t data_ringbuffer_show(struct device *dev, struct attribute *attr, char *buf)
+{
+	int i;
+	int j;
+	u32 val;
+	int chars_written = 0;
+	struct page *target_page;
+
+	for(i = 0; i < 32; ++i)
+	{
+		j = __to_data_counter(i);
+		get_data_segment(j, &j, &target_page);
+		val = ringbuffer_read_u32(target_page, j);
+		chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%d,", val);
+	}
+	chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%s", "\n");
+	return chars_written;
+}
+
+static ssize_t counts_ringbuffer_show(struct device *dev, struct attribute *attr, char *buf)
 {
 	int i;
 	int j;
@@ -132,7 +164,7 @@ static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf
 	{
 		j = __to_count_counter(first_unread_count + i);
 		get_count_segment(j, &j, &target_page);
-		val = read_count(target_page, j);
+		val = ringbuffer_read_u32(target_page, j);
 		chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%d\n", val);
 	}
 	unread_counts = 0;
@@ -140,7 +172,7 @@ static ssize_t events_show(struct device *dev, struct attribute *attr, char *buf
 	return chars_written;
 }
 
-static ssize_t events_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
+static ssize_t counts_ringbuffer_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
 {
 	u32 val;
 	if(kstrtou32(buf, 0, &val))
@@ -149,7 +181,8 @@ static ssize_t events_store(struct device *dev, struct attribute *attr, const ch
 	return count;
 }
 
-static DEVICE_ATTR_RW(events);
+static DEVICE_ATTR_RW(counts_ringbuffer);
+static DEVICE_ATTR_RO(data_ringbuffer);
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
@@ -313,7 +346,8 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 			dev_info(&dev->dev, "AER not supported\n");
 
 		pci_set_master(dev);
-		device_create_file(&dev->dev, &dev_attr_events);
+		device_create_file(&dev->dev, &dev_attr_counts_ringbuffer);
+		device_create_file(&dev->dev, &dev_attr_data_ringbuffer);
 		return ret;
 	}
 	else {
@@ -324,7 +358,8 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 }
 
 static void fpga_driver_remove(struct pci_dev *dev) {
-	device_remove_file(&dev->dev, &dev_attr_events);
+	device_remove_file(&dev->dev, &dev_attr_data_ringbuffer);
+	device_remove_file(&dev->dev, &dev_attr_counts_ringbuffer);
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
