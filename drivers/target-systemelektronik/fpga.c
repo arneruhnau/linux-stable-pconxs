@@ -89,20 +89,13 @@ static ssize_t maxitems_show(struct device *dev, struct attribute *attr, char *b
 
 static ssize_t unread_items_show(struct device *dev, struct attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n", atomic_read(&fpga.unread_data_items));
-}
-
-static ssize_t unread_items_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
-{
-	int read_items;
-	if(kstrtoint(buf, 0, &read_items))
-		return -EINVAL;
-	atomic_sub(read_items, &fpga.unread_data_items);
-	return count;
+	int to_read = atomic_read(&fpga.unread_data_items);
+	atomic_sub(to_read, &fpga.unread_data_items);
+	return snprintf(buf, PAGE_SIZE, "%i\n", to_read);
 }
 
 static DEVICE_ATTR_RO(maxitems);
-static DEVICE_ATTR_RW(unread_items);
+static DEVICE_ATTR_RO(unread_items);
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
