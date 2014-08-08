@@ -84,7 +84,7 @@ static struct fpga_dev fpga = {
 
 static ssize_t maxitems_show(struct device *dev, struct attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u\n", PAGE_SIZE * fpga.data.count / fpga.data.item_size);
+	return snprintf(buf, PAGE_SIZE, "%lu\n", PAGE_SIZE * fpga.data.count / fpga.data.item_size);
 }
 
 static ssize_t unread_items_show(struct device *dev, struct attribute *attr, char *buf)
