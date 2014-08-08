@@ -17,6 +17,7 @@
  *
  *****************************************************************************/
 
+#include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -40,8 +41,8 @@
 
 #include <linux/fs.h>
 
-#include <linux/highmem.h>
 #include <linux/spinlock.h>
+#include <linux/atomic.h>
 
 #include "pcie_registers.h"
 
@@ -58,150 +59,50 @@ struct counted_pages {
 struct fpga_dev {
 	struct counted_pages data;
 	struct counted_pages counts;
-	int count_counter;
-	int first_unread_count;
-	int unread_counts;
 	int interrupts_available;
+
+	atomic_t unread_data_items;
 };
 
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
 static unsigned int data_pagecount = 1;
+static unsigned int data_itemsize = sizeof(u32);
 static unsigned int count_pagecount = 1;
+static unsigned int count_itemsize = sizeof(u32);
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
 module_param(data_pagecount, int, S_IRUGO);
+module_param(data_itemsize, int, S_IRUGO);
 module_param(count_pagecount, int, S_IRUGO);
+module_param(count_itemsize, int, S_IRUGO);
 
 static struct fpga_dev fpga = {
-	.data =  {
-		.item_size = sizeof(u32),
-	},
-	.counts = {
-		.item_size = sizeof(u32),
-	},
+	.unread_data_items = ATOMIC_INIT(0)
 };
 
-// NOTE: Change locking to _irqsave/_irqrestore once we run in interrupt context
-static DEFINE_SPINLOCK(count_counter_lock);
-
-static void get_segment(int absolute_index, struct counted_pages *cp, int* relative_index, struct page** target_page)
+static ssize_t maxitems_show(struct device *dev, struct attribute *attr, char *buf)
 {
-	int n = absolute_index / (PAGE_SIZE / cp->item_size);
-	*relative_index = absolute_index - (n * PAGE_SIZE / cp->item_size);
-	*target_page = nth_page(cp->pages, n);
+	return snprintf(buf, PAGE_SIZE, "%u\n", PAGE_SIZE * fpga.data.count / fpga.data.item_size);
 }
 
-static inline void get_count_segment(int absolute_index, int* relative_index, struct page** target_page)
+static ssize_t unread_items_show(struct device *dev, struct attribute *attr, char *buf)
 {
-	get_segment(absolute_index, &fpga.counts, relative_index, target_page);
+	return snprintf(buf, PAGE_SIZE, "%u\n", atomic_read(&fpga.unread_data_items));
 }
 
-static inline void get_data_segment(int absolute_index, int* relative_index, struct page** target_page)
+static ssize_t unread_items_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
 {
-	get_segment(absolute_index, &fpga.data, relative_index, target_page);
-}
-
-static inline int __to_counter(int val, struct counted_pages *cp) {
-	return val % (cp->count * PAGE_SIZE / cp->item_size);
-}
-
-static inline int increment_count_counter(void)
-{
-	int i;
-	spin_lock(&count_counter_lock);
-	i = fpga.counts.count;
-	if(!fpga.unread_counts++)
-		fpga.first_unread_count = fpga.counts.count;
-	fpga.count_counter = __to_counter(i + 1, &fpga.counts);
-	spin_unlock(&count_counter_lock);
-	return i;
-}
-
-#define RINGBUFFER_WRITE(type) \
-static inline void ringbuffer_write_##type(struct page *target_page, int index, type val) \
-{ \
-	type *buffer = (type *)kmap(target_page); \
-	buffer[index] = val; \
-	kunmap(target_page); \
-}
-
-#define RINGBUFFER_READ(type) \
-static inline type ringbuffer_read_##type(struct page *target_page, int index) \
-{ \
-	type ret; \
-	type *buffer; \
-	buffer = (u32 *)kmap(target_page); \
-	ret = buffer[index]; \
-	kunmap(target_page); \
-	return ret; \
-}
-
-RINGBUFFER_WRITE(u32);
-RINGBUFFER_READ(u32);
-
-static void add_new_event_count(u32 val)
-{
-	int i;
-	struct page *target_page;
-
-	i = increment_count_counter();
-	get_count_segment(i, &i, &target_page);
-	ringbuffer_write_u32(target_page, i, val);
-}
-
-static ssize_t data_ringbuffer_show(struct device *dev, struct attribute *attr, char *buf)
-{
-	int i;
-	int j;
-	u32 val;
-	int chars_written = 0;
-	struct page *target_page;
-
-	for(i = 0; i < 32; ++i)
-	{
-		j = __to_counter(i, &fpga.data);
-		get_data_segment(j, &j, &target_page);
-		val = ringbuffer_read_u32(target_page, j);
-		chars_written += scnprintf(buf+chars_written, PAGE_SIZE - chars_written, "%d,", val);
-	}
-	buf[chars_written - 1] = '\n';
-	return chars_written;
-}
-
-static ssize_t counts_ringbuffer_show(struct device *dev, struct attribute *attr, char *buf)
-{
-	int i;
-	int j;
-	u32 val;
-	int chars_written = 0;
-	struct page *target_page;
-
-	spin_lock(&count_counter_lock);
-	for(i = 0; i < fpga.unread_counts; ++i)
-	{
-		j = __to_counter(fpga.first_unread_count + i, &fpga.counts);
-		get_count_segment(j, &j, &target_page);
-		val = ringbuffer_read_u32(target_page, j);
-		chars_written += scnprintf(buf + chars_written, PAGE_SIZE - chars_written, "%d\n", val);
-	}
-	fpga.unread_counts = 0;
-	spin_unlock(&count_counter_lock);
-	return chars_written;
-}
-
-static ssize_t counts_ringbuffer_store(struct device *dev, struct attribute *attr, const char *buf, size_t count)
-{
-	u32 val;
-	if(kstrtou32(buf, 0, &val))
+	int read_items;
+	if(kstrtoint(buf, 0, &read_items))
 		return -EINVAL;
-	add_new_event_count(val);
+	atomic_sub(read_items, &fpga.unread_data_items);
 	return count;
 }
 
-static DEVICE_ATTR_RW(counts_ringbuffer);
-static DEVICE_ATTR_RO(data_ringbuffer);
+static DEVICE_ATTR_RO(maxitems);
+static DEVICE_ATTR_RW(unread_items);
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
@@ -269,35 +170,34 @@ static void fpga_release_pages(struct pci_dev *dev) {
 	_fpga_release_pages(dev, &fpga.counts);
 }
 
-static bool _fpga_allocate_pages(struct pci_dev *dev, struct counted_pages *cp, int count) {
+static bool _fpga_allocate_pages(struct pci_dev *dev, struct counted_pages *cp) {
 	if(dev_get_cma_area(&dev->dev) == NULL)
 	{
 		dev_err(&dev->dev, "CMA area not supported\n");
 		return false;
 	}
 	else {
-		cp->pages = dma_alloc_from_contiguous(&dev->dev, count, 8); // 8 = 2^8 == 256-page-alignment
-		cp->count = count;
+		cp->pages = dma_alloc_from_contiguous(&dev->dev, cp->count, 8); // 8 = 2^8 == 256-page-alignment
 		if(cp->pages)
 			return true;
 		else {
-			dev_err(&dev->dev, "Could not alloc %d cma pages", count);
+			dev_err(&dev->dev, "Could not alloc %d cma pages", cp->count);
 			return false;
 		}
 	}
 }
 
 static bool fpga_allocate_pages(struct pci_dev *dev) {
-	bool ret = _fpga_allocate_pages(dev, &fpga.data, data_pagecount);
+	bool ret = _fpga_allocate_pages(dev, &fpga.data);
 	if(!ret)
 		return ret;
-	ret = _fpga_allocate_pages(dev, &fpga.counts, count_pagecount);
+	ret = _fpga_allocate_pages(dev, &fpga.counts);
 	return ret;
 }
 
 static irqreturn_t handle_msi_interrupt(int irq, void *data) {
-	struct pci_dev *dev = data;
-	dev_err(&dev->dev, "IRQ %d\n", irq);
+	/* read from INBOUND1 the most recent count */
+	atomic_add(2, &fpga.unread_data_items);
 	return IRQ_HANDLED;
 }
 
@@ -366,8 +266,8 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 			dev_info(&dev->dev, "AER not supported\n");
 
 		pci_set_master(dev);
-		device_create_file(&dev->dev, &dev_attr_counts_ringbuffer);
-		device_create_file(&dev->dev, &dev_attr_data_ringbuffer);
+		device_create_file(&dev->dev, &dev_attr_maxitems);
+		device_create_file(&dev->dev, &dev_attr_unread_items);
 		return ret;
 	}
 	else {
@@ -378,8 +278,8 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 }
 
 static void fpga_driver_remove(struct pci_dev *dev) {
-	device_remove_file(&dev->dev, &dev_attr_data_ringbuffer);
-	device_remove_file(&dev->dev, &dev_attr_counts_ringbuffer);
+	device_remove_file(&dev->dev, &dev_attr_maxitems);
+	device_remove_file(&dev->dev, &dev_attr_unread_items);
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
@@ -405,11 +305,11 @@ static struct pci_driver fpga_driver = {
 
 static int __init fpga_driver_init(void)
 {
-	int ret = 0;
-	ret = pci_register_driver(&fpga_driver);
-	if(!ret) {
-	}
-	return ret;
+	fpga.data.count = data_pagecount;
+	fpga.data.item_size = data_itemsize;
+	fpga.counts.count = count_pagecount;
+	fpga.counts.item_size = count_itemsize;
+	return pci_register_driver(&fpga_driver);
 }
 
 static void __exit fpga_driver_exit(void)
