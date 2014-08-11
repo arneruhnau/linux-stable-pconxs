@@ -42,7 +42,8 @@
 #include <linux/fs.h>
 
 #include <linux/spinlock.h>
-#include <linux/atomic.h>
+#include <linux/completion.h>
+#include <linux/jiffies.h>
 
 #include "pcie_registers.h"
 
@@ -61,7 +62,7 @@ struct fpga_dev {
 	struct counted_pages counts;
 	int interrupts_available;
 
-	atomic_t unread_data_items;
+	u32 unread_data_items;
 };
 
 
@@ -78,8 +79,11 @@ module_param(data_itemsize, int, S_IRUGO);
 module_param(count_pagecount, int, S_IRUGO);
 module_param(count_itemsize, int, S_IRUGO);
 
+static DECLARE_COMPLETION(events_available);
+static DEFINE_SPINLOCK(sp_unread_data_items);
+
 static struct fpga_dev fpga = {
-	.unread_data_items = ATOMIC_INIT(0)
+	.unread_data_items = 0
 };
 
 static ssize_t maxitems_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -89,9 +93,21 @@ static ssize_t maxitems_show(struct device *dev, struct device_attribute *attr, 
 
 static ssize_t unread_items_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	int to_read = atomic_read(&fpga.unread_data_items);
-	atomic_sub(to_read, &fpga.unread_data_items);
-	return snprintf(buf, PAGE_SIZE, "%i\n", to_read);
+	int to_read = 0;
+	int wait_result = 0;
+
+	wait_result = wait_for_completion_killable_timeout(&events_available, msecs_to_jiffies(250));
+	spin_lock(&sp_unread_data_items);
+	to_read = fpga.unread_data_items;
+	fpga.unread_data_items -= to_read;
+	spin_unlock(&sp_unread_data_items);
+
+	if (wait_result > 0)
+		return snprintf(buf, PAGE_SIZE, "%i\n", to_read);
+	else if (wait_result == 0)
+		return -ETIME;
+	else
+		return wait_result;
 }
 
 static DEVICE_ATTR_RO(maxitems);
@@ -189,8 +205,16 @@ static bool fpga_allocate_pages(struct pci_dev *dev) {
 }
 
 static irqreturn_t handle_msi_interrupt(int irq, void *data) {
+	int old_value;
+
+	spin_lock(&sp_unread_data_items);
+	old_value = fpga.unread_data_items;
 	/* read from INBOUND1 the most recent count */
-	atomic_add(2, &fpga.unread_data_items);
+	fpga.unread_data_items += 2;
+	spin_unlock(&sp_unread_data_items);
+
+	if(!old_value)
+		complete(&events_available);
 	return IRQ_HANDLED;
 }
 
