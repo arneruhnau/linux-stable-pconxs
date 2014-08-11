@@ -82,12 +82,12 @@ static struct fpga_dev fpga = {
 	.unread_data_items = ATOMIC_INIT(0)
 };
 
-static ssize_t maxitems_show(struct device *dev, struct attribute *attr, char *buf)
+static ssize_t maxitems_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	return snprintf(buf, PAGE_SIZE, "%lu\n", PAGE_SIZE * fpga.data.count / fpga.data.item_size);
 }
 
-static ssize_t unread_items_show(struct device *dev, struct attribute *attr, char *buf)
+static ssize_t unread_items_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	int to_read = atomic_read(&fpga.unread_data_items);
 	atomic_sub(to_read, &fpga.unread_data_items);
