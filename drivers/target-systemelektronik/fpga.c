@@ -40,6 +40,7 @@
 #include <linux/slab.h>
 
 #include <linux/fs.h>
+#include <linux/cdev.h>
 
 #include <linux/spinlock.h>
 #include <linux/completion.h>
@@ -47,7 +48,7 @@
 
 #include "pcie_registers.h"
 
-#define TARGET_FPGA_DRIVER_NAME "Target FPGA"
+#define TARGET_FPGA_DRIVER_NAME "target-fpga"
 #define PCI_VENDOR_ID_TARGET 0x1172
 #define PCI_DEVICE_ID_TARGET_FPGA 0x0004
 
@@ -63,8 +64,11 @@ struct fpga_dev {
 	int interrupts_available;
 
 	u32 unread_data_items;
-};
 
+	unsigned int major_device_number;
+	dev_t dev;
+	struct cdev cdev;
+};
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
@@ -320,17 +324,85 @@ static struct pci_driver fpga_driver = {
 	.remove		= fpga_driver_remove,
 };
 
+static int fpga_cdev_open(struct inode *inode, struct file *filp)
+{
+	return nonseekable_open(inode, filp);
+}
+
+static int fpga_cdev_release(struct inode *inode, struct file *filp)
+{
+	return 0;
+}
+
+static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+	unsigned long uaddr;
+	int i, err;
+
+	uaddr = vma->vm_start;
+	for(i = 0; i < fpga.data.count; ++i) {
+		printk(KERN_ERR "vm_insert_page(vma, %08lX, %d)\n", uaddr, i);
+		err = vm_insert_page(vma, uaddr, &fpga.data.pages[i]);
+		if(err)
+			return err;
+		uaddr += PAGE_SIZE;
+	}
+	return 0;
+}
+
+static struct file_operations fpga_cdev_ops = {
+	.owner		= THIS_MODULE,
+	.llseek		= no_llseek,
+	.open		= fpga_cdev_open,
+	.release	= fpga_cdev_release,
+	.mmap		= fpga_cdev_mmap,
+};
+
 static int __init fpga_driver_init(void)
 {
+	int ret = 0;
+	dev_t dev;
 	fpga.data.count = data_pagecount;
 	fpga.data.item_size = data_itemsize;
 	fpga.counts.count = count_pagecount;
 	fpga.counts.item_size = count_itemsize;
-	return pci_register_driver(&fpga_driver);
+
+	ret = alloc_chrdev_region(&dev, 0, 1, TARGET_FPGA_DRIVER_NAME);
+	if (ret) {
+		printk(KERN_ERR "%s: Allocation of char device numbers failed\n",
+		       TARGET_FPGA_DRIVER_NAME);
+		goto exit;
+	}
+
+	fpga.dev = dev;
+	fpga.major_device_number = MAJOR(dev);
+
+	ret = pci_register_driver(&fpga_driver);
+	if(ret) {
+		printk(KERN_ERR "%s: pci_register_driver failed: %d\n",
+		       TARGET_FPGA_DRIVER_NAME, ret);
+		unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
+		goto exit;
+	}
+
+	cdev_init(&fpga.cdev, &fpga_cdev_ops);
+	fpga.cdev.owner = THIS_MODULE;
+	ret = cdev_add(&fpga.cdev, fpga.dev, 1);
+	if(ret) {
+		printk(KERN_ERR "%s: cdev_add failed: %d\n",
+		       TARGET_FPGA_DRIVER_NAME, ret);
+		pci_unregister_driver(&fpga_driver);
+		unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
+		goto exit;
+	}
+exit:
+	return ret;
 }
 
 static void __exit fpga_driver_exit(void)
 {
+	cdev_del(&fpga.cdev);
+	unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
 	pci_unregister_driver(&fpga_driver);
 }
 
