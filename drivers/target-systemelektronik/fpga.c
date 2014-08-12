@@ -95,27 +95,7 @@ static ssize_t maxitems_show(struct device *dev, struct device_attribute *attr, 
 	return snprintf(buf, PAGE_SIZE, "%lu\n", PAGE_SIZE * fpga.data.count / fpga.data.item_size);
 }
 
-static ssize_t unread_items_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	int to_read = 0;
-	int wait_result = 0;
-
-	wait_result = wait_for_completion_killable_timeout(&events_available, msecs_to_jiffies(250));
-	spin_lock(&sp_unread_data_items);
-	to_read = fpga.unread_data_items;
-	fpga.unread_data_items -= to_read;
-	spin_unlock(&sp_unread_data_items);
-
-	if (wait_result > 0)
-		return snprintf(buf, PAGE_SIZE, "%i\n", to_read);
-	else if (wait_result == 0)
-		return -ETIME;
-	else
-		return wait_result;
-}
-
 static DEVICE_ATTR_RO(maxitems);
-static DEVICE_ATTR_RO(unread_items);
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
@@ -288,7 +268,6 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 
 		pci_set_master(dev);
 		device_create_file(&dev->dev, &dev_attr_maxitems);
-		device_create_file(&dev->dev, &dev_attr_unread_items);
 		return ret;
 	}
 	else {
@@ -300,7 +279,6 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 
 static void fpga_driver_remove(struct pci_dev *dev) {
 	device_remove_file(&dev->dev, &dev_attr_maxitems);
-	device_remove_file(&dev->dev, &dev_attr_unread_items);
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
@@ -341,7 +319,6 @@ static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 
 	uaddr = vma->vm_start;
 	for(i = 0; i < fpga.data.count; ++i) {
-		printk(KERN_ERR "vm_insert_page(vma, %08lX, %d)\n", uaddr, i);
 		err = vm_insert_page(vma, uaddr, &fpga.data.pages[i]);
 		if(err)
 			return err;
@@ -350,11 +327,31 @@ static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 	return 0;
 }
 
+static ssize_t fpga_cdev_read(struct file *filp, char __user *buf, size_t size, loff_t *offset)
+{
+	int to_read = 0;
+	int wait_result = 0;
+
+	wait_result = wait_for_completion_killable_timeout(&events_available, msecs_to_jiffies(250));
+	spin_lock(&sp_unread_data_items);
+	to_read = fpga.unread_data_items;
+	fpga.unread_data_items -= to_read;
+	spin_unlock(&sp_unread_data_items);
+
+	if (wait_result > 0)
+		return copy_to_user(buf, &to_read, sizeof(int));
+	else if (wait_result == 0)
+		return -ETIME;
+	else
+		return wait_result;
+}
+
 static struct file_operations fpga_cdev_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
 	.open		= fpga_cdev_open,
 	.release	= fpga_cdev_release,
+	.read		= fpga_cdev_read,
 	.mmap		= fpga_cdev_mmap,
 };
 
