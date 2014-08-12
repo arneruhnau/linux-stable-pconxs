@@ -34,7 +34,7 @@
 #include <linux/dma-contiguous.h>
 #include <uapi/linux/pci_regs.h>
 #include <uapi/linux/if.h>
-
+#include <linux/highmem.h>
 #include <linux/cdev.h>
 #include <asm/uaccess.h>
 #include <linux/slab.h>
@@ -64,6 +64,7 @@ struct fpga_dev {
 	int interrupts_available;
 
 	u32 unread_data_items;
+	u32 counts_ringbuffer_position;
 
 	unsigned int major_device_number;
 	dev_t dev;
@@ -87,7 +88,8 @@ static DECLARE_COMPLETION(events_available);
 static DEFINE_SPINLOCK(sp_unread_data_items);
 
 static struct fpga_dev fpga = {
-	.unread_data_items = 0
+	.unread_data_items = 0,
+	.counts_ringbuffer_position = 0
 };
 
 static ssize_t maxitems_show(struct device *dev, struct device_attribute *attr, char *buf)
@@ -188,16 +190,33 @@ static bool fpga_allocate_pages(struct pci_dev *dev) {
 	return ret;
 }
 
+static inline int get_recent_count(void)
+{
+	u32 position;
+	struct page *target_page;
+	int *buffer;
+	int result;
+
+	position = fpga.counts_ringbuffer_position;
+	// TODO: use full ringbuffer size
+	fpga.counts_ringbuffer_position = (fpga.counts_ringbuffer_position + 1) % 16;
+	target_page = nth_page(fpga.counts.pages, 0);
+	buffer = (int*)kmap(target_page);
+	result = buffer[position];
+	kunmap(target_page);
+	printk(KERN_ERR "get_recent_count returns %i\n", result);
+	return result;
+}
+
 static irqreturn_t handle_msi_interrupt(int irq, void *data) {
 	int old_value;
-
+	int new_value = get_recent_count();
 	spin_lock(&sp_unread_data_items);
 	old_value = fpga.unread_data_items;
-	/* read from INBOUND1 the most recent count */
-	fpga.unread_data_items += 2;
+	fpga.unread_data_items += new_value;
 	spin_unlock(&sp_unread_data_items);
 
-	if(!old_value)
+	if(!old_value && new_value)
 		complete(&events_available);
 	return IRQ_HANDLED;
 }
