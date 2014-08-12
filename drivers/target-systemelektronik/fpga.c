@@ -55,7 +55,6 @@
 struct counted_pages {
 	int count;
 	struct page *pages;
-	ssize_t item_size;
 };
 
 struct fpga_dev {
@@ -74,15 +73,11 @@ struct fpga_dev {
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
 static unsigned int data_pagecount = 1;
-static unsigned int data_itemsize = sizeof(u32);
 static unsigned int count_pagecount = 1;
-static unsigned int count_itemsize = sizeof(u32);
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
 module_param(data_pagecount, int, S_IRUGO);
-module_param(data_itemsize, int, S_IRUGO);
 module_param(count_pagecount, int, S_IRUGO);
-module_param(count_itemsize, int, S_IRUGO);
 
 static DECLARE_COMPLETION(events_available);
 static DEFINE_SPINLOCK(sp_unread_data_items);
@@ -91,13 +86,6 @@ static struct fpga_dev fpga = {
 	.unread_data_items = 0,
 	.counts_ringbuffer_position = 0
 };
-
-static ssize_t maxitems_show(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	return snprintf(buf, PAGE_SIZE, "%lu\n", PAGE_SIZE * fpga.data.count / fpga.data.item_size);
-}
-
-static DEVICE_ATTR_RO(maxitems);
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
 {
@@ -286,7 +274,6 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 			dev_info(&dev->dev, "AER not supported\n");
 
 		pci_set_master(dev);
-		device_create_file(&dev->dev, &dev_attr_maxitems);
 		return ret;
 	}
 	else {
@@ -297,7 +284,6 @@ static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id
 }
 
 static void fpga_driver_remove(struct pci_dev *dev) {
-	device_remove_file(&dev->dev, &dev_attr_maxitems);
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
@@ -379,9 +365,7 @@ static int __init fpga_driver_init(void)
 	int ret = 0;
 	dev_t dev;
 	fpga.data.count = data_pagecount;
-	fpga.data.item_size = data_itemsize;
 	fpga.counts.count = count_pagecount;
-	fpga.counts.item_size = count_itemsize;
 
 	ret = alloc_chrdev_region(&dev, 0, 1, TARGET_FPGA_DRIVER_NAME);
 	if (ret) {
