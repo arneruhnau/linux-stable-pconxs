@@ -73,18 +73,19 @@ struct fpga_dev {
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
 static unsigned int data_pagecount = 16;
-static unsigned int count_pagecount = 16;
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
 module_param(data_pagecount, int, S_IRUGO);
-module_param(count_pagecount, int, S_IRUGO);
 
 static DECLARE_COMPLETION(events_available);
 static DEFINE_SPINLOCK(sp_unread_data_items);
 
 static struct fpga_dev fpga = {
 	.unread_data_items = 0,
-	.counts_ringbuffer_position = 0
+	.counts_ringbuffer_position = 0,
+	.counts = {
+		.count = 16
+	},
 };
 
 static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
@@ -184,11 +185,13 @@ static inline int get_recent_count(void)
 	struct page *target_page;
 	int *buffer;
 	int result;
+	int n;
 
 	position = fpga.counts_ringbuffer_position;
-	// TODO: use full ringbuffer size
-	fpga.counts_ringbuffer_position = (fpga.counts_ringbuffer_position + 1) % 16;
-	target_page = nth_page(fpga.counts.pages, 0);
+	fpga.counts_ringbuffer_position = (fpga.counts_ringbuffer_position + 1) & 0xFFFF; // 64kB
+	n = position / (PAGE_SIZE / sizeof(int));
+	position = position & 0x3FF;
+	target_page = nth_page(fpga.counts.pages, n);
 	buffer = (int*)kmap(target_page);
 	result = buffer[position];
 	kunmap(target_page);
@@ -365,7 +368,6 @@ static int __init fpga_driver_init(void)
 	int ret = 0;
 	dev_t dev;
 	fpga.data.count = data_pagecount;
-	fpga.counts.count = count_pagecount;
 
 	ret = alloc_chrdev_region(&dev, 0, 1, TARGET_FPGA_DRIVER_NAME);
 	if (ret) {
