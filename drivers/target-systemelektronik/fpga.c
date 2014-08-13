@@ -1,6 +1,7 @@
 /******************************************************************************
  *
- *   Copyright (C) 2014  Target Systemelektronik GmbH & Co. KG. All rights reserved.
+ *   Copyright (C) 2014  Target Systemelektronik GmbH & Co. KG.
+ *   All rights reserved.
  *
  *   This program is free software;  you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -36,7 +37,7 @@
 #include <uapi/linux/if.h>
 #include <linux/highmem.h>
 #include <linux/cdev.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/slab.h>
 
 #include <linux/fs.h>
@@ -63,7 +64,7 @@ struct fpga_dev {
 	int interrupts_available;
 
 	u32 unread_data_items;
-	u32 counts_ringbuffer_position;
+	u32 counts_position;
 
 	unsigned int major_device_number;
 	dev_t dev;
@@ -82,30 +83,39 @@ static DEFINE_SPINLOCK(sp_unread_data_items);
 
 static struct fpga_dev fpga = {
 	.unread_data_items = 0,
-	.counts_ringbuffer_position = 0,
+	.counts_position = 0,
 	.counts = {
 		.count = 16
 	},
 };
 
-static void _dw_pcie_prog_viewport_inbound(struct pci_dev *dev, u32 viewport, u64 fpga_base, u64 ram_base, u64 size)
+static void _dw_pcie_prog_viewport_inbound(
+	struct pci_dev *dev, u32 viewport,
+	u64 fpga_base, u64 ram_base, u64 size)
 {
-        pci_write_config_dword(dev, PCIE_ATU_VIEWPORT,		PCIE_ATU_REGION_INBOUND |
-								viewport);
-        pci_write_config_dword(dev, PCIE_ATU_LOWER_BASE, 	fpga_base);
-        pci_write_config_dword(dev, PCIE_ATU_UPPER_BASE, 	fpga_base >> 32);
-        pci_write_config_dword(dev, PCIE_ATU_LIMIT, 		fpga_base + size - 1);
-        pci_write_config_dword(dev, PCIE_ATU_LOWER_TARGET, 	ram_base);
-        pci_write_config_dword(dev, PCIE_ATU_UPPER_TARGET, 	ram_base + size - 1);
-        pci_write_config_dword(dev, PCIE_ATU_CR1, 		PCIE_ATU_TYPE_MEM);
-        pci_write_config_dword(dev, PCIE_ATU_CR2, 		PCIE_ATU_ENABLE);
+	pci_write_config_dword(dev, PCIE_ATU_VIEWPORT,
+			       PCIE_ATU_REGION_INBOUND | viewport);
+	pci_write_config_dword(dev, PCIE_ATU_LOWER_BASE,
+			       fpga_base);
+	pci_write_config_dword(dev, PCIE_ATU_UPPER_BASE,
+			       fpga_base >> 32);
+	pci_write_config_dword(dev, PCIE_ATU_LIMIT,
+			       fpga_base + size - 1);
+	pci_write_config_dword(dev, PCIE_ATU_LOWER_TARGET,
+			       ram_base);
+	pci_write_config_dword(dev, PCIE_ATU_UPPER_TARGET,
+			       ram_base + size - 1);
+	pci_write_config_dword(dev, PCIE_ATU_CR1,
+			       PCIE_ATU_TYPE_MEM);
+	pci_write_config_dword(dev, PCIE_ATU_CR2,
+			       PCIE_ATU_ENABLE);
 
-	dev_info(&dev->dev, 
+	dev_info(&dev->dev,
 		"Viewpoint:\t0x%04X\n"
 		"Size:\t\t0x%016llX\n"
 		"FPGA-Start:\t0x%016llX\n"
-		"FPGA-End:\t0x%016llX\n" 
-		"Ram-Start:\t0x%016llX\n" 
+		"FPGA-End:\t0x%016llX\n"
+		"Ram-Start:\t0x%016llX\n"
 		"Ram-End:\t0x%016llX\n",
 		viewport,
 		size,
@@ -120,18 +130,17 @@ static void dw_pcie_prog_viewports_inbound(struct pci_dev *dev)
 {
 	struct pci_dev *root_complex = dev;
 
-	while(!pci_is_root_bus(root_complex->bus)) {
+	while (!pci_is_root_bus(root_complex->bus))
 		root_complex = root_complex->bus->self;
-	}
 	_dw_pcie_prog_viewport_inbound(
-		root_complex, 
+		root_complex,
 		PCIE_ATU_REGION_INDEX0,
-		0, 
+		0,
 		page_to_phys(fpga.data.pages),
 		PAGE_SIZE * fpga.data.count
 	);
 	_dw_pcie_prog_viewport_inbound(
-		root_complex, 
+		root_complex,
 		PCIE_ATU_REGION_INDEX1,
 		PAGE_SIZE * fpga.data.count,
 		page_to_phys(fpga.counts.pages),
@@ -141,42 +150,42 @@ static void dw_pcie_prog_viewports_inbound(struct pci_dev *dev)
 
 static void _fpga_release_pages(struct pci_dev *dev, struct counted_pages *cp)
 {
-	if(cp->pages) {
-		if(!dma_release_from_contiguous(&dev->dev, cp->pages, cp->count))
+	if (cp->pages)
+		if (!dma_release_from_contiguous(
+			&dev->dev, cp->pages, cp->count)
+		)
 			dev_err(&dev->dev, "Could not release pages\n");
-		else
-			dev_info(&dev->dev, "Released %d pages from contiguous\n", cp->count);
-	}
 }
 
-static void fpga_release_pages(struct pci_dev *dev) {
+static void fpga_release_pages(struct pci_dev *dev)
+{
 	_fpga_release_pages(dev, &fpga.data);
 	_fpga_release_pages(dev, &fpga.counts);
 }
 
-static bool _fpga_allocate_pages(struct pci_dev *dev, struct counted_pages *cp) {
-	if(dev_get_cma_area(&dev->dev) == NULL)
-	{
+static bool _fpga_allocate_pages(struct pci_dev *dev,
+				 struct counted_pages *cp)
+{
+	if (dev_get_cma_area(&dev->dev) == NULL) {
 		dev_err(&dev->dev, "CMA area not supported\n");
 		return false;
-	}
-	else {
-		cp->pages = dma_alloc_from_contiguous(&dev->dev, cp->count, 8); // 8 = 2^8 == 256-page-alignment
-		if(cp->pages)
+	} else {
+		/* Allocate with 1MB (= 2^8 * 4K) alignment */
+		cp->pages = dma_alloc_from_contiguous(&dev->dev, cp->count, 8);
+		if (cp->pages)
 			return true;
 		else {
-			dev_err(&dev->dev, "Could not alloc %d cma pages", cp->count);
+			dev_err(&dev->dev, "Could not alloc %d pages",
+				cp->count);
 			return false;
 		}
 	}
 }
 
-static bool fpga_allocate_pages(struct pci_dev *dev) {
-	bool ret = _fpga_allocate_pages(dev, &fpga.data);
-	if(!ret)
-		return ret;
-	ret = _fpga_allocate_pages(dev, &fpga.counts);
-	return ret;
+static bool fpga_allocate_pages(struct pci_dev *dev)
+{
+	return _fpga_allocate_pages(dev, &fpga.data)
+	    && _fpga_allocate_pages(dev, &fpga.counts);
 }
 
 static inline int get_recent_count(void)
@@ -187,51 +196,53 @@ static inline int get_recent_count(void)
 	int result;
 	int n;
 
-	position = fpga.counts_ringbuffer_position;
-	fpga.counts_ringbuffer_position = (fpga.counts_ringbuffer_position + 1) & 0xFFFF; // 64kB
+	position = fpga.counts_position;
+	fpga.counts_position = (fpga.counts_position + 1) & 0xFFFF;
 	n = position / (PAGE_SIZE / sizeof(int));
 	position = position & 0x3FF;
 	target_page = nth_page(fpga.counts.pages, n);
-	buffer = (int*)kmap(target_page);
+	buffer = (int *)kmap(target_page);
 	result = buffer[position];
 	kunmap(target_page);
-	printk(KERN_ERR "get_recent_count returns %i\n", result);
 	return result;
 }
 
-static irqreturn_t handle_msi_interrupt(int irq, void *data) {
+static irqreturn_t handle_msi_interrupt(int irq, void *data)
+{
 	int old_value;
 	int new_value = get_recent_count();
+
 	spin_lock(&sp_unread_data_items);
 	old_value = fpga.unread_data_items;
 	fpga.unread_data_items += new_value;
 	spin_unlock(&sp_unread_data_items);
 
-	if(!old_value && new_value)
+	if (!old_value && new_value)
 		complete(&events_available);
 	return IRQ_HANDLED;
 }
 
-static int fpga_setup_irq(struct pci_dev *dev) {
+static int fpga_setup_irq(struct pci_dev *dev)
+{
 	int irq;
 	int end;
 	int ret;
 	char *name = "fpga-msi";
 
 	fpga.interrupts_available = pci_enable_msi_range(dev, 1, 4);
-	if(fpga.interrupts_available < 0)
-	{
+	if (fpga.interrupts_available < 0) {
 		dev_err(&dev->dev, "Could not request msi range [1,4]\n");
 		return fpga.interrupts_available;
 	}
-	dev_info(&dev->dev, "Enabled %d interrupts\n", fpga.interrupts_available);
+	dev_info(&dev->dev, "Enabled %d interrupts\n",
+		 fpga.interrupts_available);
 	end = dev->irq + fpga.interrupts_available - 1;
-	for(irq = dev->irq; irq <= end; ++irq)
-	{
+	for (irq = dev->irq; irq <= end; ++irq) {
 		snprintf(name, IFNAMSIZ, "fpga-msi-%d", irq);
 		name[IFNAMSIZ-1] = 0;
-		ret = devm_request_irq(&dev->dev, irq, handle_msi_interrupt, 0, name, dev);
-		if(ret) {
+		ret = devm_request_irq(&dev->dev, irq, handle_msi_interrupt,
+				       0, name, dev);
+		if (ret) {
 			dev_err(&dev->dev, "Failed to request irq %d\n", irq);
 			return ret;
 		}
@@ -243,61 +254,57 @@ static void fpga_teardown_irq(struct pci_dev *dev)
 {
 	int irq;
 	int end = dev->irq + fpga.interrupts_available - 1;
-	for(irq = dev->irq; irq <= end; ++irq)
+
+	for (irq = dev->irq; irq <= end; ++irq)
 		devm_free_irq(&dev->dev, irq, dev);
 	pci_disable_msi(dev);
 }
 
-static int fpga_driver_probe(struct pci_dev *dev, const struct pci_device_id *id) {
-	int ret = 0;
-	if ((dev->vendor == vid) && (dev->device == did)) 
-	{
+static int fpga_driver_probe(struct pci_dev *dev,
+			     const struct pci_device_id *id)
+{
+	int ret;
+
+	if ((dev->vendor == vid) && (dev->device == did)) {
 		ret = pcim_enable_device(dev);
 		if (ret) {
 			dev_err(&dev->dev, "pci_enable_device() failed\n");
 			return ret;
 		}
-		dev_info(&dev->dev, "Found and enabled PCI device with "
-					"VID 0x%04X, DID 0x%04X\n", vid, did);
 		ret = pcim_iomap_regions(dev, 0, TARGET_FPGA_DRIVER_NAME);
-		if(ret)
-		{
+		if (ret) {
 			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
 		}
-		if(!fpga_allocate_pages(dev))	
+		if (!fpga_allocate_pages(dev))
 			return -ENOMEM;
 		dw_pcie_prog_viewports_inbound(dev);
 		ret = fpga_setup_irq(dev);
-		if(ret)
+		if (ret)
 			return ret;
-		if(pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR))
+		if (pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR))
 			ret = pci_enable_pcie_error_reporting(dev);
 		else
 			dev_info(&dev->dev, "AER not supported\n");
 
 		pci_set_master(dev);
 		return ret;
-	}
-	else {
-		dev_err(&dev->dev, "This PCI device does not match "
-					"VID 0x%04X, DID 0x%04X\n", vid, did);
+	} else
 		return -ENODEV;
-	}
 }
 
-static void fpga_driver_remove(struct pci_dev *dev) {
+static void fpga_driver_remove(struct pci_dev *dev)
+{
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
 	fpga_release_pages(dev);
-	return;
 }
 
 
-// we check for the configured vid/did dynamically for now
+/* we check for the configured vid/did dynamically for now */
 static const struct pci_device_id fpga_driver_tbl[] = {
-	{ PCI_DEVICE(PCI_ANY_ID, PCI_ANY_ID) }, 
+	{ PCI_DEVICE(PCI_ANY_ID, PCI_ANY_ID) },
 	{ 0, },
 };
 
@@ -326,21 +333,24 @@ static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 	int i, err;
 
 	uaddr = vma->vm_start;
-	for(i = 0; i < fpga.data.count; ++i) {
+	for (i = 0; i < fpga.data.count; ++i) {
 		err = vm_insert_page(vma, uaddr, &fpga.data.pages[i]);
-		if(err)
+		if (err)
 			return err;
 		uaddr += PAGE_SIZE;
 	}
 	return 0;
 }
 
-static ssize_t fpga_cdev_read(struct file *filp, char __user *buf, size_t size, loff_t *offset)
+static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
+			      size_t size, loff_t *offset)
 {
 	int to_read = 0;
 	int wait_result = 0;
 
-	wait_result = wait_for_completion_killable_timeout(&events_available, msecs_to_jiffies(250));
+	wait_result = wait_for_completion_killable_timeout(
+		&events_available, msecs_to_jiffies(250)
+	);
 	spin_lock(&sp_unread_data_items);
 	to_read = fpga.unread_data_items;
 	fpga.unread_data_items -= to_read;
@@ -354,7 +364,7 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf, size_t size, 
 		return wait_result;
 }
 
-static struct file_operations fpga_cdev_ops = {
+static const struct file_operations fpga_cdev_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
 	.open		= fpga_cdev_open,
@@ -365,24 +375,19 @@ static struct file_operations fpga_cdev_ops = {
 
 static int __init fpga_driver_init(void)
 {
-	int ret = 0;
+	int ret;
 	dev_t dev;
-	fpga.data.count = data_pagecount;
 
+	fpga.data.count = data_pagecount;
 	ret = alloc_chrdev_region(&dev, 0, 1, TARGET_FPGA_DRIVER_NAME);
-	if (ret) {
-		printk(KERN_ERR "%s: Allocation of char device numbers failed\n",
-		       TARGET_FPGA_DRIVER_NAME);
+	if (ret)
 		goto exit;
-	}
 
 	fpga.dev = dev;
 	fpga.major_device_number = MAJOR(dev);
 
 	ret = pci_register_driver(&fpga_driver);
-	if(ret) {
-		printk(KERN_ERR "%s: pci_register_driver failed: %d\n",
-		       TARGET_FPGA_DRIVER_NAME, ret);
+	if (ret) {
 		unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
 		goto exit;
 	}
@@ -390,9 +395,7 @@ static int __init fpga_driver_init(void)
 	cdev_init(&fpga.cdev, &fpga_cdev_ops);
 	fpga.cdev.owner = THIS_MODULE;
 	ret = cdev_add(&fpga.cdev, fpga.dev, 1);
-	if(ret) {
-		printk(KERN_ERR "%s: cdev_add failed: %d\n",
-		       TARGET_FPGA_DRIVER_NAME, ret);
+	if (ret) {
 		pci_unregister_driver(&fpga_driver);
 		unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
 		goto exit;
