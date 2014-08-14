@@ -185,10 +185,9 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c2_2>;
 	status = "okay";
-	eeprom: eeprom@51 {
-		compatible = "24c02";
+	rtc: rtc@51 {
+		compatible = "nxp,pcf8563";
 		reg = <0x51>;
-		pagesize = <16>;
 		status = "okay";
 	};
 	ssd1305: ssd1305@3C {
