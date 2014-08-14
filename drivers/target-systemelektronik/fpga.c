@@ -73,7 +73,7 @@ struct fpga_dev {
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
-static unsigned int data_pagecount = 16;
+static unsigned int data_pagecount = 16384;
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
 module_param(data_pagecount, int, S_IRUGO);
