@@ -320,7 +320,53 @@ static struct ssd1307fb_ops ssd1307fb_ssd1307_ops = {
 	.remove	= ssd1307fb_ssd1307_remove,
 };
 
-static int ssd1307fb_ssd1305_ssd1306_init(struct ssd1307fb_par *par)
+static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
+{
+	int ret;
+#define SSD1306_SEND(command) \
+ret = ssd1307fb_write_cmd(par->client, command); \
+if (ret < 0) return ret;
+
+#define SSD1306_SEND_VALUE(command, value) \
+ret = ssd1307fb_write_cmd(par->client, command); \
+ret = ret & ssd1307fb_write_cmd(par->client, value); \
+if (ret < 0) return ret;
+
+	dev_err(&par->client->dev, "Initializing display\n");
+	SSD1306_SEND(0xAF); /* DISPLAY_OFF */
+	SSD1306_SEND_VALUE(SSD1307FB_SET_CLOCK_FREQ, 0x80);
+	SSD1306_SEND_VALUE(SSD1307FB_SET_MULTIPLEX_RATIO, par->height - 1);
+	SSD1306_SEND_VALUE(SSD1307FB_SET_DISPLAY_OFFSET, 0x00);
+	SSD1306_SEND(0x40); /* Display Start Line */
+	SSD1306_SEND_VALUE(SSD1307FB_CHARGE_PUMP, 0x14);
+	SSD1306_SEND(SSD1307FB_SEG_REMAP_ON);
+	SSD1306_SEND(0xC8); /* Set COM direction */
+	SSD1306_SEND_VALUE(SSD1307FB_SET_COM_PINS_CONFIG, 0x12);
+	SSD1306_SEND_VALUE(SSD1307FB_CONTRAST, 0xFF);
+	SSD1306_SEND_VALUE(SSD1307FB_SET_PRECHARGE_PERIOD, 0x22);
+	SSD1306_SEND_VALUE(SSD1307FB_SET_VCOMH, 0x30);
+	SSD1306_SEND_VALUE(SSD1307FB_SET_ADDRESS_MODE, SSD1307FB_SET_ADDRESS_MODE_HORIZONTAL);
+
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_COL_RANGE);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0);
+	ret = ret & ssd1307fb_write_cmd(par->client, 127);
+	if (ret < 0)
+		return ret;
+
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_SET_PAGE_RANGE);
+	ret = ret & ssd1307fb_write_cmd(par->client, 0);
+	ret = ret & ssd1307fb_write_cmd(par->client, 3);
+	if (ret < 0)
+		return ret;
+
+	SSD1306_SEND(0xA4); /* Entire display on */
+	SSD1306_SEND(0xA6); /* Inverse display */
+
+	SSD1306_SEND(SSD1307FB_DISPLAY_ON);
+	return 0;
+}
+
+static int ssd1307fb_ssd1305_init(struct ssd1307fb_par *par)
 {
 	int ret;
 
@@ -411,19 +457,23 @@ static int ssd1307fb_ssd1305_ssd1306_init(struct ssd1307fb_par *par)
 	return 0;
 }
 
-static struct ssd1307fb_ops ssd1307fb_ssd1305_ssd1306_ops = {
-	.init	= ssd1307fb_ssd1305_ssd1306_init,
+static struct ssd1307fb_ops ssd1307fb_ssd1305_ops = {
+	.init	= ssd1307fb_ssd1305_init,
+};
+
+static struct ssd1307fb_ops ssd1307fb_ssd1306_ops = {
+	.init	= ssd1307fb_ssd1306_init,
 };
 
 
 static const struct of_device_id ssd1307fb_of_match[] = {
 	{
 		.compatible = "solomon,ssd1305fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1305_ssd1306_ops,
+		.data = (void *)&ssd1307fb_ssd1305_ops,
 	},
 	{
 		.compatible = "solomon,ssd1306fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1305_ssd1306_ops,
+		.data = (void *)&ssd1307fb_ssd1306_ops,
 	},
 	{
 		.compatible = "solomon,ssd1307fb-i2c",
