@@ -238,8 +238,14 @@
 		reg = <0x51>;
 		status = "okay";
 	};
-	ssd1305: ssd1305@3C {
+	ssd1306: ssd1306@3C {
 		compatible = "solomon,ssd1306fb-i2c";
+		reg = <0x3C>;
+		status = "ok";
+		reset-gpios = <&gpio6 9 1>;
+	};
+	ssd1305: ssd1305@3C {
+		compatible = "solomon,ssd1305fb-i2c";
 		reg = <0x3C>;
 		solomon,height = <32>;
 		solomon,width = <128>;
@@ -249,7 +255,7 @@
 		solomon,display-offset = <0>;
 		solomon,com-direction = <0xC0>;
 		solomon,contrast = <0x80>;
-		status = "ok";
+		status = "disabled";
 		reset-gpios = <&gpio6 9 1>;
 	};
 	pmic: pfuze100@08 {
