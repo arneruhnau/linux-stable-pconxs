@@ -360,7 +360,7 @@ if (ret < 0) return ret;
 		return ret;
 
 	SSD1306_SEND(0xA4); /* Entire display on */
-	SSD1306_SEND(0xA6); /* Inverse display */
+	SSD1306_SEND(0xA6); /* Normal display */
 
 	SSD1306_SEND(SSD1307FB_DISPLAY_ON);
 	return 0;
