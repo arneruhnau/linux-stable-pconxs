@@ -87,18 +87,18 @@
 	trizeps7-pconxs {
 		pinctrl_gpio_keys: gpio_keysgrp {
 			fsl,pins = <
-				MX6QDL_PAD_GPIO_7__GPIO1_IO07	0x1B0B0
-				MX6QDL_PAD_GPIO_8__GPIO1_IO08	0x1A0B0
+				MX6QDL_PAD_GPIO_7__GPIO1_IO07	0x80000000
+				MX6QDL_PAD_GPIO_8__GPIO1_IO08	0x80000000
 			>;
 		};
 		pinctrl_gpio_leds: gpio_ledsgrp {
 			fsl,pins = <
-				MX6QDL_PAD_KEY_ROW4__GPIO4_IO15	0x130B0
+				MX6QDL_PAD_KEY_ROW4__GPIO4_IO15	0x80000000
 			>;
 		};
 		pinctrl_gpio_poweroff: gpio_poweroffgrp {
 			fsl,pins = <
-				MX6QDL_PAD_KEY_COL4__GPIO4_IO14	0x130B0
+				MX6QDL_PAD_KEY_COL4__GPIO4_IO14	0x80000000
 			>;
 		};
 		pinctrl_i2c1: i2c1grp {
