@@ -46,19 +46,36 @@
 
 	gpio-keys {
 		compatible = "gpio-keys";
+		status = "ok";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_keys>;
 
 		left {
 			label = "Key L";
-			gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio1 7 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_L>;
 		};
 		right {
 			label = "Key R";
-			gpios = <&gpio1 8  GPIO_ACTIVE_HIGH>;
+			gpios = <&gpio1 8 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_R>;
 		};
+	};
+	gpio-leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio_leds>;
+		right {
+			label = "Right LED";
+			gpios = <&gpio4 15 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "heartbeat";
+		};
+	};
+	gpio-poweroff {
+		compatible = "gpio-poweroff";
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_gpio_poweroff>;
+		gpios = <&gpio4 14 GPIO_ACTIVE_LOW>;
 	};
 };
 
@@ -70,10 +87,18 @@
 	trizeps7-pconxs {
 		pinctrl_gpio_keys: gpio_keysgrp {
 			fsl,pins = <
-				MX6QDL_PAD_GPIO_8__GPIO1_IO08	0x80000000
-				MX6QDL_PAD_GPIO_7__GPIO1_IO07	0x80000000
-				MX6QDL_PAD_KEY_ROW4__GPIO4_IO15	0x80000000
-				MX6QDL_PAD_KEY_COL4__GPIO4_IO14	0x80000000
+				MX6QDL_PAD_GPIO_7__GPIO1_IO07	0x1B0B0
+				MX6QDL_PAD_GPIO_8__GPIO1_IO08	0x1A0B0
+			>;
+		};
+		pinctrl_gpio_leds: gpio_ledsgrp {
+			fsl,pins = <
+				MX6QDL_PAD_KEY_ROW4__GPIO4_IO15	0x130B0
+			>;
+		};
+		pinctrl_gpio_poweroff: gpio_poweroffgrp {
+			fsl,pins = <
+				MX6QDL_PAD_KEY_COL4__GPIO4_IO14	0x130B0
 			>;
 		};
 		pinctrl_i2c1: i2c1grp {
