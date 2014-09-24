@@ -332,7 +332,6 @@ ret = ssd1307fb_write_cmd(par->client, command); \
 ret = ret & ssd1307fb_write_cmd(par->client, value); \
 if (ret < 0) return ret;
 
-	dev_err(&par->client->dev, "Initializing display\n");
 	SSD1306_SEND(0xAF); /* DISPLAY_OFF */
 	SSD1306_SEND_VALUE(SSD1307FB_SET_CLOCK_FREQ, 0x80);
 	SSD1306_SEND_VALUE(SSD1307FB_SET_MULTIPLEX_RATIO, 31);
