@@ -425,7 +425,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet_4>;
 	phy-mode = "rmii";
-	status = "okay";
+	status = "disabled";
 	phy-reset-gpios = <&gpio6 31 0>;
 	phy-supply = <&sw4_reg>;
 };
@@ -533,7 +533,7 @@
 };
 
 &pcie {
-	status = "okay";
+	status = "disabled";
 	reset-gpio = <&gpio3 13 0>;
 	wake-up-gpio = <&gpio6 7 0>;
 };
