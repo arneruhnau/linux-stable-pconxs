@@ -75,7 +75,7 @@
 		compatible = "gpio-poweroff";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_gpio_poweroff>;
-		gpios = <&gpio4 14 GPIO_ACTIVE_LOW>;
+		gpios = <&gpio4 14 GPIO_ACTIVE_HIGH>;
 	};
 };
 
