@@ -266,8 +266,10 @@
 	ssd1306: ssd1306@3C {
 		compatible = "solomon,ssd1306fb-i2c";
 		reg = <0x3C>;
-		status = "ok";
+		solomon,height = <32>;
+		solomon,width = <128>;
 		reset-gpios = <&gpio6 9 1>;
+		status = "ok";
 	};
 	ssd1305: ssd1305@3C {
 		compatible = "solomon,ssd1305fb-i2c";
