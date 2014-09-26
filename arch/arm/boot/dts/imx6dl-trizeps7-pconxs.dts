@@ -68,12 +68,12 @@
 		right_r {
 			label = "Right R";
 			gpios = <&gpio5 2 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "heartbeat";
+			linux,default-trigger = "none";
 		};
 		right_g {
 			label = "Right G";
 			gpios = <&gpio5 4 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "heartbeat";
+			linux,default-trigger = "none";
 		};
 		right_b {
 			label = "Right B";
@@ -83,12 +83,12 @@
 		left_r {
 			label = "Left R";
 			gpios = <&gpio2 16 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "heartbeat";
+			linux,default-trigger = "none";
 		};
 		left_g {
 			label = "Left G";
 			gpios = <&gpio2 17 GPIO_ACTIVE_HIGH>;
-			linux,default-trigger = "heartbeat";
+			linux,default-trigger = "none";
 		};
 		left_b {
 			label = "Left B";
