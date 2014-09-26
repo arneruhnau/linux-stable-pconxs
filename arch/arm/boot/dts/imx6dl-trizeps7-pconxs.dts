@@ -272,7 +272,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c1>;
 	status = "disabled";
-	temp: temp@4E {
+	temp_pconxs: temp_pconxs@4E {
 		compatible = "national,lm75";
 		reg = <0x4E>;
 		status = "okay";
@@ -288,6 +288,11 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c2_2>;
 	status = "okay";
+	temp_u100: temp_u100@4E {
+		compatible = "national,lm75";
+		reg = <0x4E>;
+		status = "okay";
+	};
 	rtc: rtc@51 {
 		compatible = "nxp,pcf8563";
 		reg = <0x51>;
