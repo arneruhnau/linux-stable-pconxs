@@ -16,6 +16,8 @@
 #include <linux/pwm.h>
 #include <linux/delay.h>
 
+#include <linux/backlight.h>
+
 #define SSD1307FB_DATA			0x40
 #define SSD1307FB_COMMAND		0x80
 
@@ -38,6 +40,9 @@
 #define	SSD1307FB_SET_COM_PINS_CONFIG	0xda
 #define	SSD1307FB_SET_VCOMH		0xdb
 
+#define DEFAULT_BL_NAME "oled-backlight"
+#define MAX_BRIGHTNESS 255
+
 struct ssd1307fb_par;
 
 struct ssd1307fb_ops {
@@ -49,7 +54,7 @@ struct ssd1307fb_par {
 	struct i2c_client *client;
 	u32 height;
 	struct fb_info *info;
-	struct ssd1307fb_ops *ops;
+	struct ssd1307fb_ops *dev_ops;
 	u32 page_offset;
 	u32 column_offset;
 	u32 display_offset;
@@ -61,6 +66,9 @@ struct ssd1307fb_par {
 	u32 pwm_period;
 	int reset;
 	u32 width;
+	struct backlight_device *bl;
+	struct device *dev;
+	struct backlight_ops *bl_ops;
 };
 
 struct ssd1307fb_array {
@@ -320,6 +328,26 @@ static struct ssd1307fb_ops ssd1307fb_ssd1307_ops = {
 	.remove	= ssd1307fb_ssd1307_remove,
 };
 
+static int ssd1306_bl_update_status(struct backlight_device *bl)
+{
+	int ret;
+	struct ssd1307fb_par *par = bl_get_data(bl);
+
+	if (bl->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK))
+		bl->props.brightness = 0;
+
+	ret = ssd1307fb_write_cmd(par->client, SSD1307FB_CONTRAST);
+	ret = ret & ssd1307fb_write_cmd(par->client, bl->props.brightness);
+	if (ret < 0)
+		return ret;
+	return 0;
+}
+
+static struct backlight_ops ssd1306_bl_ops = {
+	.options = 0, // or: BL_CORE_SUSPENDRESUME
+	.update_status = &ssd1306_bl_update_status,
+};
+
 static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
 {
 	int ret;
@@ -464,23 +492,65 @@ static struct ssd1307fb_ops ssd1307fb_ssd1306_ops = {
 	.init	= ssd1307fb_ssd1306_init,
 };
 
+struct ssd1307_ops {
+	struct ssd1307fb_ops *dev_ops;
+	struct backlight_ops *bl_ops;
+};
+
+static const struct ssd1307_ops ssd1307_ssd1305_ops = {
+	.dev_ops = &ssd1307fb_ssd1305_ops,
+};
+
+static const struct ssd1307_ops ssd1307_ssd1306_ops = {
+	.dev_ops = &ssd1307fb_ssd1306_ops,
+	.bl_ops = &ssd1306_bl_ops,
+};
+
+static const struct ssd1307_ops ssd1307_ssd1307_ops = {
+	.dev_ops = &ssd1307fb_ssd1307_ops,
+};
 
 static const struct of_device_id ssd1307fb_of_match[] = {
 	{
 		.compatible = "solomon,ssd1305fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1305_ops,
+		.data = (void *)&ssd1307_ssd1305_ops,
 	},
 	{
 		.compatible = "solomon,ssd1306fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1306_ops,
+		.data = (void *)&ssd1307_ssd1306_ops,
 	},
 	{
 		.compatible = "solomon,ssd1307fb-i2c",
-		.data = (void *)&ssd1307fb_ssd1307_ops,
+		.data = (void *)&ssd1307_ssd1307_ops,
 	},
 	{},
 };
 MODULE_DEVICE_TABLE(of, ssd1307fb_of_match);
+
+static int ssd1307_backlight_register(struct  ssd1307fb_par *par)
+{
+	struct backlight_device *bl;
+	struct backlight_properties props;
+
+	props.type = BACKLIGHT_PLATFORM;
+	props.max_brightness = MAX_BRIGHTNESS;
+
+	if (par->contrast > props.max_brightness)
+		par->contrast = props.max_brightness;
+
+	props.brightness = par->contrast;
+
+	bl = devm_backlight_device_register(par->dev, DEFAULT_BL_NAME, 
+					    par->dev, par, par->bl_ops, 
+					    &props);
+
+	if (IS_ERR(bl))
+		return PTR_ERR(bl);
+
+	par->bl = bl;
+
+	return 0;
+}
 
 static int ssd1307fb_probe(struct i2c_client *client,
 			   const struct i2c_device_id *id)
@@ -488,6 +558,7 @@ static int ssd1307fb_probe(struct i2c_client *client,
 	struct fb_info *info;
 	struct device_node *node = client->dev.of_node;
 	u32 vmem_size;
+	struct ssd1307_ops *ops;
 	struct ssd1307fb_par *par;
 	u8 *vmem;
 	int ret;
@@ -506,9 +577,12 @@ static int ssd1307fb_probe(struct i2c_client *client,
 	par = info->par;
 	par->info = info;
 	par->client = client;
+	par->dev = &client->dev;
 
-	par->ops = (struct ssd1307fb_ops *)of_match_device(ssd1307fb_of_match,
-							   &client->dev)->data;
+	ops = (struct ssd1307_ops *)of_match_device(ssd1307fb_of_match,
+						    &client->dev)->data;
+	par->dev_ops = ops->dev_ops;
+	par->bl_ops = ops->bl_ops;
 
 	par->reset = of_get_named_gpio(client->dev.of_node,
 					 "reset-gpios", 0);
@@ -594,8 +668,8 @@ static int ssd1307fb_probe(struct i2c_client *client,
 	gpio_set_value(par->reset, 1);
 	udelay(4);
 
-	if (par->ops->init) {
-		ret = par->ops->init(par);
+	if (par->dev_ops->init) {
+		ret = par->dev_ops->init(par);
 		if (ret)
 			goto reset_oled_error;
 	}
@@ -608,11 +682,18 @@ static int ssd1307fb_probe(struct i2c_client *client,
 
 	dev_info(&client->dev, "fb%d: %s framebuffer device registered, using %d bytes of video memory\n", info->node, info->fix.id, vmem_size);
 
+	if (par->bl_ops) {
+		ret = ssd1307_backlight_register(par);
+		if (ret) {
+			dev_err(par->dev, "Couldn't register backlight control\n");
+			goto panel_init_error;
+		}
+	}
 	return 0;
 
 panel_init_error:
-	if (par->ops->remove)
-		par->ops->remove(par);
+	if (par->dev_ops->remove)
+		par->dev_ops->remove(par);
 reset_oled_error:
 	fb_deferred_io_cleanup(info);
 fb_alloc_error:
@@ -626,8 +707,8 @@ static int ssd1307fb_remove(struct i2c_client *client)
 	struct ssd1307fb_par *par = info->par;
 
 	unregister_framebuffer(info);
-	if (par->ops->remove)
-		par->ops->remove(par);
+	if (par->dev_ops->remove)
+		par->dev_ops->remove(par);
 	fb_deferred_io_cleanup(info);
 	framebuffer_release(info);
 
