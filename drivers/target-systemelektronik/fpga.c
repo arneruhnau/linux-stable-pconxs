@@ -43,7 +43,7 @@
 #include <linux/fs.h>
 #include <linux/cdev.h>
 
-#include <linux/spinlock.h>
+#include <linux/atomic.h>
 #include <linux/completion.h>
 #include <linux/jiffies.h>
 
@@ -63,7 +63,7 @@ struct fpga_dev {
 	struct counted_pages counts;
 	int interrupts_available;
 
-	u32 unread_data_items;
+	atomic_t unread_data_items;
 	u32 counts_position;
 
 	unsigned int major_device_number;
@@ -79,10 +79,9 @@ module_param(vid, ushort, S_IRUGO);
 module_param(data_pagecount, int, S_IRUGO);
 
 static DECLARE_COMPLETION(events_available);
-static DEFINE_SPINLOCK(sp_unread_data_items);
 
 static struct fpga_dev fpga = {
-	.unread_data_items = 0,
+	.unread_data_items = ATOMIC_INIT(0),
 	.counts_position = 0,
 	.counts = {
 		.count = 16
@@ -209,15 +208,9 @@ static inline int get_recent_count(void)
 
 static irqreturn_t handle_msi_interrupt(int irq, void *data)
 {
-	int old_value;
-	int new_value = get_recent_count();
+	int to_add = get_recent_count();
 
-	spin_lock(&sp_unread_data_items);
-	old_value = fpga.unread_data_items;
-	fpga.unread_data_items += new_value;
-	spin_unlock(&sp_unread_data_items);
-
-	if (!old_value && new_value)
+	if (atomic_add_return(to_add, &fpga.unread_data_items) == 0)
 		complete(&events_available);
 	return IRQ_HANDLED;
 }
@@ -345,23 +338,18 @@ static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 			      size_t size, loff_t *offset)
 {
-	int to_read = 0;
-	int wait_result = 0;
+	int to_read, wait_result;
 
 	wait_result = wait_for_completion_killable_timeout(
 		&events_available, msecs_to_jiffies(250)
 	);
-	spin_lock(&sp_unread_data_items);
-	to_read = fpga.unread_data_items;
-	fpga.unread_data_items -= to_read;
-	spin_unlock(&sp_unread_data_items);
 
-	if (wait_result > 0)
+	if (wait_result > 0) {
+		to_read = atomic_xchg(&fpga.unread_data_items, 0);
 		return copy_to_user(buf, &to_read, sizeof(int));
-	else if (wait_result == 0)
+	} else if (wait_result == 0)
 		return -ETIME;
-	else
-		return wait_result;
+	return wait_result;
 }
 
 static const struct file_operations fpga_cdev_ops = {
