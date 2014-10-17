@@ -168,17 +168,13 @@ static bool _fpga_allocate_pages(struct pci_dev *dev,
 	if (dev_get_cma_area(&dev->dev) == NULL) {
 		dev_err(&dev->dev, "CMA area not supported\n");
 		return false;
-	} else {
-		/* Allocate with 1MB (= 2^8 * 4K) alignment */
-		cp->pages = dma_alloc_from_contiguous(&dev->dev, cp->count, 8);
-		if (cp->pages)
-			return true;
-		else {
-			dev_err(&dev->dev, "Could not alloc %d pages",
-				cp->count);
-			return false;
-		}
 	}
+	/* Allocate with 1MB (= 2^8 * 4K) alignment */
+	cp->pages = dma_alloc_from_contiguous(&dev->dev, cp->count, 8);
+	if (cp->pages)
+		return true;
+	dev_err(&dev->dev, "Could not alloc %d pages", cp->count);
+	return false;
 }
 
 static bool fpga_allocate_pages(struct pci_dev *dev)
@@ -282,8 +278,8 @@ static int fpga_driver_probe(struct pci_dev *dev,
 
 		pci_set_master(dev);
 		return ret;
-	} else
-		return -ENODEV;
+	}
+	return -ENODEV;
 }
 
 static void fpga_driver_remove(struct pci_dev *dev)
