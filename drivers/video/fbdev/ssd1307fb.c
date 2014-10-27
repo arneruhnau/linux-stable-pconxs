@@ -351,6 +351,8 @@ static struct backlight_ops ssd1306_bl_ops = {
 static int ssd1307fb_ssd1306_init(struct ssd1307fb_par *par)
 {
 	int ret;
+	struct ssd1307fb_array *initial_contents;
+
 #define SSD1306_SEND(command) \
 ret = ssd1307fb_write_cmd(par->client, command); \
 if (ret < 0) return ret;
@@ -388,6 +390,15 @@ if (ret < 0) return ret;
 
 	SSD1306_SEND(0xA4); /* Entire display on */
 	SSD1306_SEND(0xA6); /* Normal display */
+
+	initial_contents = ssd1307fb_alloc_array(par->width * par->height / 8,
+				      SSD1307FB_DATA);
+	if (initial_contents)
+	{
+		ssd1307fb_write_array(par->client, initial_contents,
+				      par->width * par->height / 8);
+		kfree(initial_contents);
+	}
 
 	SSD1306_SEND(SSD1307FB_DISPLAY_ON);
 	return 0;
