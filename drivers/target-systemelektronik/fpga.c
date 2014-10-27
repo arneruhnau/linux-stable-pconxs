@@ -1,5 +1,16 @@
 /******************************************************************************
  *
+ * CvP code taken from altera_cvp.c -- driver for configuring Altera FPGAs via CvP
+ *
+ * Written by: Andres Cassinelli <acassine@altera.com>
+ *             Altera Corporation
+ *
+ * Copyright (C) 2012 Altera Corporation. All Rights Reserved.
+ *
+ * This file is provided under a dual BSD/GPLv2 license.
+ *
+ *   For the rest:
+ *
  *   Copyright (C) 2014  Target Systemelektronik GmbH & Co. KG.
  *   All rights reserved.
  *
@@ -48,6 +59,7 @@
 #include <linux/jiffies.h>
 
 #include "pcie_registers.h"
+#include "altera_cvp.h"
 
 #define TARGET_FPGA_DRIVER_NAME "target-fpga"
 #define PCI_VENDOR_ID_TARGET 0x1172
@@ -66,9 +78,9 @@ struct fpga_dev {
 	u32 unread_data_items;
 	u32 counts_position;
 
-	unsigned int major_device_number;
 	dev_t dev;
 	struct cdev cdev;
+	struct cdev cvpdev;
 };
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
@@ -87,6 +99,362 @@ static struct fpga_dev fpga = {
 	.counts = {
 		.count = 16
 	},
+};
+
+static struct altera_cvp_dev cvp_dev; /* contents initialized in altera_cvp_init() */
+
+/* CvP helper functions */
+
+static int altera_cvp_get_offset_and_mask(int bit, int *byte_offset, u8 *mask)
+{
+	switch (bit) {
+		case DATA_ENCRYPTED:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS;
+			*mask = MASK_DATA_ENCRYPTED;
+			break;
+		case DATA_COMPRESSED:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS;
+			*mask = MASK_DATA_COMPRESSED;
+			break;
+		case CVP_CONFIG_READY:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS;
+			*mask = MASK_CVP_CONFIG_READY;
+			break;
+		case CVP_CONFIG_ERROR:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS;
+			*mask = MASK_CVP_CONFIG_ERROR;
+			break;
+		case CVP_EN:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS;
+			*mask = MASK_CVP_EN;
+			break;
+		case USER_MODE:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS;
+			*mask =  MASK_USER_MODE;
+			break;
+		case PLD_CLK_IN_USE:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_STATUS + 1;
+			*mask = MASK_PLD_CLK_IN_USE;
+			break;
+		case CVP_MODE:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_MODE_CTRL;
+			*mask = MASK_CVP_MODE;
+			break;
+		case HIP_CLK_SEL:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_MODE_CTRL;
+			*mask = MASK_HIP_CLK_SEL;
+			break;
+		case CVP_CONFIG:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_PROG_CTRL;
+			*mask = MASK_CVP_CONFIG;
+			break;
+		case START_XFER:
+			*byte_offset = OFFSET_VSEC + OFFSET_CVP_PROG_CTRL;
+			*mask = MASK_START_XFER;
+			break;
+		case CVP_CFG_ERR_LATCH:
+			*byte_offset = OFFSET_VSEC + OFFSET_UNC_IE_STATUS;
+			*mask = MASK_CVP_CFG_ERR_LATCH;
+			break;
+		default:
+			return -EINVAL;
+	}
+	return 0;
+}
+
+static int altera_cvp_read_bit(int bit, u8 *value)
+{
+	int byte_offset;
+	u8 byte_val, byte_mask;
+	if (altera_cvp_get_offset_and_mask(bit, &byte_offset, &byte_mask))
+		return -EINVAL;
+	if (pci_read_config_byte(cvp_dev.pci_dev, byte_offset, &byte_val))
+		return -EAGAIN;
+	*value = (byte_val & byte_mask) ? 1 : 0;
+	return 0;
+}
+
+static int altera_cvp_write_bit(int bit, u8 value)
+{
+	int byte_offset;
+	u8 byte_val, byte_mask;
+
+	switch (bit) {
+		case CVP_MODE:
+		case HIP_CLK_SEL:
+		case CVP_CONFIG:
+		case START_XFER:
+		case CVP_CFG_ERR_LATCH:
+			altera_cvp_get_offset_and_mask(bit, &byte_offset, &byte_mask);
+			pci_read_config_byte(cvp_dev.pci_dev, byte_offset, &byte_val);
+			byte_val = value ? (byte_val | byte_mask) : (byte_val & ~byte_mask);
+			pci_write_config_byte(cvp_dev.pci_dev, byte_offset, byte_val);
+			return 0;
+		default:
+			return -EINVAL; /* only the bits above are writeable */
+	}
+} 
+
+static int altera_cvp_set_num_clks(int num_clks)
+{
+	if (num_clks < 1 || num_clks > 64)
+		return -EINVAL;
+	if (num_clks == 64)
+		num_clks = 0x00;
+	return (pci_write_config_byte(cvp_dev.pci_dev,
+					OFFSET_VSEC+OFFSET_CVP_NUMCLKS,
+					num_clks));
+}
+
+#define NUM_REG_WRITES 244
+#define DUMMY_VALUE 0x00000000
+/**
+ * altera_cvp_switch_clk() - switch between CvP clock and internal clock
+ *
+ * Issues dummy memory writes to the PCIe HIP, allowing the Control Block to
+ * switch between the HIP's CvP clock and the internal clock.
+ */
+static int altera_cvp_switch_clk(void)
+{
+	int i;
+	altera_cvp_set_num_clks(1);
+	for (i = 0; i < NUM_REG_WRITES; i++) {
+		iowrite32(DUMMY_VALUE, cvp_dev.wr_addr);
+	}
+	return 0;
+}
+
+static int altera_cvp_set_data_type(void)
+{
+	int error, num_clks;
+	u8 compr, encr;
+
+	if ((error = altera_cvp_read_bit(DATA_COMPRESSED, &compr)) ||
+	    (error = altera_cvp_read_bit(DATA_ENCRYPTED, &encr)))
+		return error;
+
+	if (compr)
+		num_clks = 8;
+	else if (encr)
+		num_clks = 4;
+	else
+		num_clks = 1;
+
+	return (altera_cvp_set_num_clks(num_clks));
+}
+
+static int altera_cvp_send_data(u32 *data, unsigned long num_words)
+{
+#ifdef DEBUG
+	u8 bit_val;
+	unsigned int i;
+	for (i = 0; i < num_words; i++) {
+		iowrite32(data[i], cvp_dev.wr_addr);
+		if ((i + 1) % ERR_CHK_INTERVAL == 0) {
+			altera_cvp_read_bit(CVP_CONFIG_ERROR, &bit_val);
+			if (bit_val) {
+				dev_err(&cvp_dev.pci_dev->dev, "CB detected a CRC error "
+								"between words %d and %d\n",
+								i + 1 - ERR_CHK_INTERVAL,
+								i + 1);
+				return -EAGAIN;
+			}
+		}
+	}
+	dev_info(&cvp_dev.pci_dev->dev, "A total of %ld 32-bit words were "
+					"sent to the FPGA\n", num_words);
+#else
+	iowrite32_rep(cvp_dev.wr_addr, data, num_words);
+#endif /* DEBUG */
+	return 0;
+}
+
+/* Polls the requested bit until it has the specified value (or until timeout) */
+/* Returns 0 once the bit has that value, error code on timeout */
+static int altera_cvp_wait_for_bit(int bit, u8 value)
+{
+	u8 bit_val;
+	DECLARE_WAIT_QUEUE_HEAD(cvp_wq);
+
+	altera_cvp_read_bit(bit, &bit_val);
+	if (bit_val != value) {
+		wait_event_timeout(cvp_wq, 0, MAX_WAIT);
+		altera_cvp_read_bit(bit, &bit_val);
+		if (bit_val != value) {
+			dev_info(&cvp_dev.pci_dev->dev, "Timed out while "
+							"polling bit %d\n", bit);
+			return -EAGAIN;
+		}
+	}
+	return 0;
+}
+
+static int altera_cvp_setup(void)
+{
+	altera_cvp_write_bit(HIP_CLK_SEL, 1);
+	altera_cvp_write_bit(CVP_MODE, 1);
+	altera_cvp_switch_clk(); /* allow CB to sense if system reset is issued */
+	altera_cvp_write_bit(CVP_CONFIG, 1); /* request CB to begin CvP transfer */
+
+	if (altera_cvp_wait_for_bit(CVP_CONFIG_READY, 1)) /* wait until CB is ready */
+		return -EAGAIN;
+
+	altera_cvp_switch_clk();
+	altera_cvp_write_bit(START_XFER, 1);
+	altera_cvp_set_data_type();
+	dev_info(&cvp_dev.pci_dev->dev, "Now starting CvP...\n");
+	return 0; /* success */
+}
+
+static int altera_cvp_teardown(void)
+{
+	u8 bit_val;
+
+	/* if necessary, flush remainder buffer */
+	if (cvp_dev.remain_size > 0) {
+		u32 last_word = 0;
+		memcpy(&last_word, cvp_dev.remain, cvp_dev.remain_size);
+		altera_cvp_send_data(&last_word, cvp_dev.remain_size);
+	}
+
+	altera_cvp_write_bit(START_XFER, 0);
+	altera_cvp_write_bit(CVP_CONFIG, 0); /* request CB to end CvP transfer */
+	altera_cvp_switch_clk();
+
+	if (altera_cvp_wait_for_bit(CVP_CONFIG_READY, 0)) /* wait until CB is ready */
+		return -EAGAIN;
+
+	altera_cvp_read_bit(CVP_CFG_ERR_LATCH, &bit_val);
+	if (bit_val) {
+		dev_err(&cvp_dev.pci_dev->dev, "Configuration error detected, "
+						"CvP has failed\n");
+		altera_cvp_write_bit(CVP_CFG_ERR_LATCH, 1); /* clear error bit */
+	}
+
+	altera_cvp_write_bit(CVP_MODE, 0);
+	altera_cvp_write_bit(HIP_CLK_SEL, 0);
+
+	if (!bit_val) { /* wait for application layer to be ready */
+		altera_cvp_wait_for_bit(PLD_CLK_IN_USE, 1);
+		altera_cvp_wait_for_bit(USER_MODE, 1);
+		dev_info(&cvp_dev.pci_dev->dev, "CvP successful, application "
+						"layer now ready\n");
+	}
+	return 0; /* success */
+}
+
+/* Open and close */
+
+int altera_cvp_open(struct inode *inode, struct file *filp)
+{
+	/* enforce single-open */
+	if (!atomic_dec_and_test(&cvp_dev.is_available)) {
+		atomic_inc(&cvp_dev.is_available);
+		return -EBUSY;
+	}
+
+	if ((filp->f_flags & O_ACCMODE) != O_RDONLY) {
+		u8 cvp_enabled = 0;
+		if (altera_cvp_read_bit(CVP_EN, &cvp_enabled))
+			return -EAGAIN;
+		if (cvp_enabled) {
+			return altera_cvp_setup();
+		} else {
+			dev_err(&cvp_dev.pci_dev->dev, "CvP is not enabled in "
+							"the design on this "
+							"FPGA\n");
+			return -EOPNOTSUPP;
+		}
+	}
+	return 0; /* success */
+}
+
+int altera_cvp_release(struct inode *inode, struct file *filp)
+{
+	atomic_inc(&cvp_dev.is_available); /* release the device */
+	if ((filp->f_flags & O_ACCMODE) != O_RDONLY) {
+		return altera_cvp_teardown();
+	}
+	return 0; /* success */
+}
+
+/* Read and write */
+
+ssize_t altera_cvp_read(struct file *filp, char __user *buf, size_t count, loff_t *f_pos)
+{
+	int dev_size = NUM_VSEC_REGS * BYTES_IN_REG;
+	int i, byte_offset;
+	u8 *out_buf;
+	ssize_t ret_val; /* number of bytes successfully read */
+
+	if (*f_pos >= dev_size)
+		return 0; /* we're at EOF already */
+	if (*f_pos + count > dev_size)
+		count = dev_size - *f_pos; /* we can only read until EOF */
+
+	out_buf = kmalloc(count, GFP_KERNEL);
+
+	for (i = 0; i < count; i++) {
+		byte_offset = OFFSET_VSEC + *f_pos + i;
+		pci_read_config_byte(cvp_dev.pci_dev, byte_offset, &out_buf[i]);
+	}
+
+	if (copy_to_user(buf, out_buf, count)) {
+		ret_val = -EFAULT;
+	} else {
+		*f_pos += count;
+		ret_val = count;
+	}
+
+	kfree(out_buf);
+	return ret_val;
+}
+
+ssize_t altera_cvp_write(struct file * filp, const char __user *buf, size_t count, loff_t *f_pos)
+{
+	ssize_t ret_val; /* number of bytes successfully transferred */
+	u8 *send_buf;
+	size_t send_buf_size;
+
+	send_buf_size = count + cvp_dev.remain_size;
+	send_buf = kmalloc(send_buf_size, GFP_KERNEL);
+
+	if (cvp_dev.remain_size > 0)
+		memcpy(send_buf, cvp_dev.remain, cvp_dev.remain_size);
+
+	if (copy_from_user(send_buf + cvp_dev.remain_size, buf, count)) {
+		ret_val = -EFAULT;
+		goto exit;
+	}
+
+	/* calculate new remainder */
+	cvp_dev.remain_size = send_buf_size % 4;
+
+	/* save bytes in new remainder in cvp_dev */
+	if (cvp_dev.remain_size > 0)
+		memcpy(cvp_dev.remain,
+			send_buf + (send_buf_size - cvp_dev.remain_size),
+			cvp_dev.remain_size);
+
+	if (altera_cvp_send_data((u32 *)send_buf, send_buf_size / 4)) {
+		ret_val = -EAGAIN;
+		goto exit;
+	}
+
+	*f_pos += count;
+	ret_val = count;
+exit:
+	kfree (send_buf);
+	return ret_val;
+}
+
+struct file_operations altera_cvp_fops = {
+	.owner =   THIS_MODULE,
+	.llseek =  no_llseek,
+	.read =    altera_cvp_read,
+	.write =   altera_cvp_write,
+	.open =    altera_cvp_open,
+	.release = altera_cvp_release,
 };
 
 static void _dw_pcie_prog_viewport_inbound(
@@ -276,6 +644,11 @@ static int fpga_driver_probe(struct pci_dev *dev,
 			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
 		}
+
+		cvp_dev.wr_addr = pcim_iomap(dev, 0, 0);
+
+		cvp_dev.pci_dev = dev; /* store pointer for PCI API calls */
+
 		if (!fpga_allocate_pages(dev))
 			return -ENOMEM;
 		dw_pcie_prog_viewports_inbound(dev);
@@ -379,27 +752,38 @@ static int __init fpga_driver_init(void)
 	dev_t dev;
 
 	fpga.data.count = data_pagecount;
-	ret = alloc_chrdev_region(&dev, 0, 1, TARGET_FPGA_DRIVER_NAME);
+	ret = alloc_chrdev_region(&dev, 0, 2, TARGET_FPGA_DRIVER_NAME);
 	if (ret)
 		goto exit;
 
 	fpga.dev = dev;
-	fpga.major_device_number = MAJOR(dev);
 
 	ret = pci_register_driver(&fpga_driver);
 	if (ret) {
-		unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
-		goto exit;
+		goto chrdev_exit;
 	}
 
 	cdev_init(&fpga.cdev, &fpga_cdev_ops);
 	fpga.cdev.owner = THIS_MODULE;
 	ret = cdev_add(&fpga.cdev, fpga.dev, 1);
-	if (ret) {
-		pci_unregister_driver(&fpga_driver);
-		unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
-		goto exit;
+	if (ret < 0)
+		goto driver_exit;
+
+	cdev_init(&cvp_dev.cdev, &altera_cvp_fops);
+	cvp_dev.cdev.owner = THIS_MODULE;
+	ret = cdev_add(&fpga.cvpdev, fpga.dev, 1);
+	if (ret < 0) {
+		cdev_del(&fpga.cdev);
+		goto driver_exit;
 	}
+
+	cvp_dev.remain_size = 0;
+	atomic_set(&cvp_dev.is_available, 1);
+
+driver_exit:
+	pci_unregister_driver(&fpga_driver);
+chrdev_exit:
+	unregister_chrdev_region(fpga.dev, 2);
 exit:
 	return ret;
 }
@@ -407,8 +791,9 @@ exit:
 static void __exit fpga_driver_exit(void)
 {
 	cdev_del(&fpga.cdev);
-	unregister_chrdev_region(MKDEV(fpga.major_device_number, 0), 1);
+	cdev_del(&fpga.cvpdev);
 	pci_unregister_driver(&fpga_driver);
+	unregister_chrdev_region(fpga.dev, 2);
 }
 
 module_init(fpga_driver_init);
