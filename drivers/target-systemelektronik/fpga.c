@@ -62,6 +62,7 @@
 #include "altera_cvp.h"
 
 #define TARGET_FPGA_DRIVER_NAME "target-fpga"
+#define TARGET_FPGA_CLASS_NAME "target-fpga"
 #define PCI_VENDOR_ID_TARGET 0x1172
 #define PCI_DEVICE_ID_TARGET_FPGA 0x0004
 
@@ -81,6 +82,8 @@ struct fpga_dev {
 	dev_t dev;
 	struct cdev cdev;
 };
+
+static struct class *device_class;
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
@@ -667,6 +670,9 @@ static int fpga_driver_probe(struct pci_dev *dev,
 
 static void fpga_driver_remove(struct pci_dev *dev)
 {
+	device_destroy(device_class, MKDEV(MAJOR(fpga.dev), 0));
+	device_destroy(device_class, MKDEV(MAJOR(fpga.dev), 1));
+	class_destroy(device_class);
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
@@ -749,6 +755,7 @@ static int __init fpga_driver_init(void)
 {
 	int ret;
 	dev_t dev;
+	struct device *device;
 
 	fpga.data.count = data_pagecount;
 	ret = alloc_chrdev_region(&dev, 0, 2, TARGET_FPGA_DRIVER_NAME);
@@ -776,6 +783,24 @@ static int __init fpga_driver_init(void)
 		goto driver_exit;
 	}
 
+	device_class = class_create(THIS_MODULE, TARGET_FPGA_CLASS_NAME);
+	if (IS_ERR(device_class)) {
+		ret = PTR_ERR(device_class);
+		goto driver_exit;
+	}
+
+	device = device_create(device_class, NULL, MKDEV(MAJOR(fpga.dev), 0), NULL, "target-fpga");
+	if (IS_ERR(device)) {
+		ret = PTR_ERR(device);
+		printk(KERN_WARNING "Error %d while trying to create target-fpga", ret);
+		goto driver_exit;
+	}
+	device = device_create(device_class, NULL, MKDEV(MAJOR(fpga.dev), 1), NULL, "target-fpga-cvp");
+	if (IS_ERR(device)) {
+		ret = PTR_ERR(device);
+		printk(KERN_WARNING "Error %d while trying to create target-fpga-cvp", ret);
+		goto driver_exit;
+	}
 	cvp_dev.remain_size = 0;
 	atomic_set(&cvp_dev.is_available, 1);
 	return 0;
