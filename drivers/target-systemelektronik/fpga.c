@@ -80,7 +80,6 @@ struct fpga_dev {
 
 	dev_t dev;
 	struct cdev cdev;
-	struct cdev cvpdev;
 };
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
@@ -765,13 +764,13 @@ static int __init fpga_driver_init(void)
 
 	cdev_init(&fpga.cdev, &fpga_cdev_ops);
 	fpga.cdev.owner = THIS_MODULE;
-	ret = cdev_add(&fpga.cdev, fpga.dev, 1);
+	ret = cdev_add(&fpga.cdev, MKDEV(MAJOR(fpga.dev), 0), 1);
 	if (ret < 0)
 		goto driver_exit;
 
 	cdev_init(&cvp_dev.cdev, &altera_cvp_fops);
 	cvp_dev.cdev.owner = THIS_MODULE;
-	ret = cdev_add(&fpga.cvpdev, fpga.dev, 1);
+	ret = cdev_add(&cvp_dev.cdev, MKDEV(MAJOR(fpga.dev), 1), 1);
 	if (ret < 0) {
 		cdev_del(&fpga.cdev);
 		goto driver_exit;
@@ -779,6 +778,7 @@ static int __init fpga_driver_init(void)
 
 	cvp_dev.remain_size = 0;
 	atomic_set(&cvp_dev.is_available, 1);
+	return 0;
 
 driver_exit:
 	pci_unregister_driver(&fpga_driver);
@@ -790,10 +790,13 @@ exit:
 
 static void __exit fpga_driver_exit(void)
 {
-	cdev_del(&fpga.cdev);
-	cdev_del(&fpga.cvpdev);
-	pci_unregister_driver(&fpga_driver);
-	unregister_chrdev_region(fpga.dev, 2);
+	if (atomic_read(&cvp_dev.is_available))
+	{
+		cdev_del(&fpga.cdev);
+		cdev_del(&cvp_dev.cdev);
+		pci_unregister_driver(&fpga_driver);
+		unregister_chrdev_region(fpga.dev, 2);
+	}
 }
 
 module_init(fpga_driver_init);
