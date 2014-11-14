@@ -1,0 +1,14 @@
+menuconfig TARGET_SYSTEMELEKTRONIK
+	bool "Target Systemelektronik Drivers"
+	default y
+
+if TARGET_SYSTEMELEKTRONIK
+
+config TARGET_SYSTEMELEKTRONIK_FPGA
+	tristate "Target Systemelektronik FPGA"
+	depends on DMA_CMA
+	default m
+	help
+	Say Y or M here to enable the Target Systemelektronik FPGA device driver
+
+endif
