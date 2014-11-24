@@ -132,7 +132,7 @@ static void _dw_pcie_prog_viewport_inbound(
 static void dw_pcie_prog_viewports_inbound(struct pci_dev *dev)
 {
 	struct pci_dev *root_complex = dev;
-const int offset = 0x00000000;
+const int offset = 0x40000000;
 	while (!pci_is_root_bus(root_complex->bus))
 		root_complex = root_complex->bus->self;
 	_dw_pcie_prog_viewport_inbound(
