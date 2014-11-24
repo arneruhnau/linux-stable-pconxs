@@ -154,7 +154,7 @@ static void dw_pcie_prog_viewports_inbound(struct pci_dev *dev)
 static bool _fpga_allocate_buffer(struct pci_dev *dev,
 				    struct fpga_ringbuffer *pws)
 {
-	pws->start = dmam_alloc_coherent(&dev->dev, pws->size, &pws->dma_handle, GFP_USER);
+	pws->start = dmam_alloc_coherent(&dev->dev, pws->size, &pws->dma_handle, GFP_USER | __GFP_ZERO);
 	if (pws->start == NULL)
 	{
 		dev_err(&dev->dev, "Could not alloc %d bytes", pws->size);
