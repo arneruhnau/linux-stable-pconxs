@@ -54,14 +54,14 @@
 #define PCI_VENDOR_ID_TARGET 0x1172
 #define PCI_DEVICE_ID_TARGET_FPGA 0x0004
 
-struct counted_pages {
-	int count;
-	struct page *pages;
+struct pointer_and_size {
+	int size;
+	void *start;
 };
 
 struct fpga_dev {
-	struct counted_pages data;
-	struct counted_pages counts;
+	struct pointer_and_size data;
+	struct pointer_and_size counts;
 	int interrupts_available;
 
 	atomic_t unread_data_items;
@@ -76,10 +76,10 @@ static struct class *device_class;
 
 static unsigned short vid = PCI_VENDOR_ID_TARGET;
 static unsigned short did = PCI_DEVICE_ID_TARGET_FPGA;
-static unsigned int data_pagecount = 16384;
+static unsigned int data_size = 16384 * PAGE_SIZE;
 module_param(did, ushort, S_IRUGO);
 module_param(vid, ushort, S_IRUGO);
-module_param(data_pagecount, int, S_IRUGO);
+module_param(data_size, int, S_IRUGO);
 
 static DECLARE_COMPLETION(events_available);
 
@@ -87,7 +87,7 @@ static struct fpga_dev fpga = {
 	.unread_data_items = ATOMIC_INIT(0),
 	.counts_position = 0,
 	.counts = {
-		.count = 16
+		.size = 16 * PAGE_SIZE
 	},
 };
 
@@ -138,80 +138,46 @@ static void dw_pcie_prog_viewports_inbound(struct pci_dev *dev)
 		root_complex,
 		PCIE_ATU_REGION_INDEX0,
 		0,
-		page_to_phys(fpga.data.pages),
-		PAGE_SIZE * fpga.data.count
+		page_to_phys(virt_to_page(fpga.data.start)),
+		fpga.data.size
 	);
 	_dw_pcie_prog_viewport_inbound(
 		root_complex,
 		PCIE_ATU_REGION_INDEX1,
-		PAGE_SIZE * fpga.data.count,
-		page_to_phys(fpga.counts.pages),
-		PAGE_SIZE * fpga.counts.count
+		fpga.data.size,
+		page_to_phys(virt_to_page(fpga.counts.start)),
+		fpga.counts.size
 	);
 }
 
-static void _fpga_release_pages(struct pci_dev *dev, struct counted_pages *cp)
+static bool _fpga_allocate_buffer(struct pci_dev *dev,
+				    struct pointer_and_size *pws)
 {
-	if (cp->pages)
-		if (!dma_release_from_contiguous(
-			&dev->dev, cp->pages, cp->count)
-		)
-			dev_err(&dev->dev, "Could not release pages\n");
-}
-
-static void fpga_release_pages(struct pci_dev *dev)
-{
-	_fpga_release_pages(dev, &fpga.data);
-	_fpga_release_pages(dev, &fpga.counts);
-}
-
-static bool _fpga_allocate_pages(struct pci_dev *dev,
-				 struct counted_pages *cp)
-{
-	if (dev_get_cma_area(&dev->dev) == NULL) {
-		dev_err(&dev->dev, "CMA area not supported\n");
+	dma_addr_t dma_handle;
+	pws->start = dmam_alloc_coherent(&dev->dev, pws->size, &dma_handle, GFP_USER);
+	if (pws->start == NULL)
+	{
+		dev_err(&dev->dev, "Could not alloc %d bytes", pws->size);
 		return false;
-	} else {
-		/* Allocate with 1MB (= 2^8 * 4K) alignment */
-		cp->pages = dma_alloc_from_contiguous(&dev->dev, cp->count, 8);
-		if (cp->pages)
-			return true;
-		else {
-			dev_err(&dev->dev, "Could not alloc %d pages",
-				cp->count);
-			return false;
-		}
 	}
+	return true;
 }
 
-static bool fpga_allocate_pages(struct pci_dev *dev)
+static bool fpga_allocate_buffers(struct pci_dev *dev)
 {
-	return _fpga_allocate_pages(dev, &fpga.data)
-	    && _fpga_allocate_pages(dev, &fpga.counts);
-}
-
-static inline int get_recent_count(void)
-{
-	u32 position;
-	struct page *target_page;
-	int *buffer;
-	int result;
-	int n;
-
-	position = fpga.counts_position;
-	fpga.counts_position = (fpga.counts_position + 1) & 0xFFFF;
-	n = position / (PAGE_SIZE / sizeof(int));
-	position = position & 0x3FF;
-	target_page = nth_page(fpga.counts.pages, n);
-	buffer = (int *)kmap(target_page);
-	result = buffer[position];
-	kunmap(target_page);
-	return result;
+	if(!_fpga_allocate_buffer(dev, &fpga.data))
+		return false;
+	return _fpga_allocate_buffer(dev, &fpga.counts);
 }
 
 static irqreturn_t handle_msi_interrupt(int irq, void *data)
 {
-	int to_add = get_recent_count();
+	int to_add;
+	u32 position;
+
+	position = fpga.counts_position;
+	fpga.counts_position = (fpga.counts_position + 1) & 0x3FFF;
+	to_add = ((int *)fpga.counts.start)[position];
 
 	if (atomic_add_return(to_add, &fpga.unread_data_items) == to_add)
 		complete(&events_available);
@@ -272,7 +238,7 @@ static int fpga_driver_probe(struct pci_dev *dev,
 			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
 		}
-		if (!fpga_allocate_pages(dev))
+		if (!fpga_allocate_buffers(dev))
 			return -ENOMEM;
 		dw_pcie_prog_viewports_inbound(dev);
 		ret = fpga_setup_irq(dev);
@@ -296,7 +262,6 @@ static void fpga_driver_remove(struct pci_dev *dev)
 	pci_clear_master(dev);
 	pci_disable_pcie_error_reporting(dev);
 	fpga_teardown_irq(dev);
-	fpga_release_pages(dev);
 }
 
 
@@ -330,9 +295,10 @@ static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 	unsigned long uaddr;
 	int i, err;
 
+	struct page *start = virt_to_page(fpga.data.start);
 	uaddr = vma->vm_start;
-	for (i = 0; i < fpga.data.count; ++i) {
-		err = vm_insert_page(vma, uaddr, &fpga.data.pages[i]);
+	for (i = 0; i < fpga.data.size / PAGE_SIZE; ++i) {
+		err = vm_insert_page(vma, uaddr, nth_page(start, i));
 		if (err)
 			return err;
 		uaddr += PAGE_SIZE;
@@ -372,7 +338,7 @@ static int __init fpga_driver_init(void)
 	dev_t dev;
 	struct device *device;
 
-	fpga.data.count = data_pagecount;
+	fpga.data.size = data_size;
 	ret = alloc_chrdev_region(&dev, 0, 1, TARGET_FPGA_DRIVER_NAME);
 	if (ret)
 		goto exit;
@@ -411,7 +377,6 @@ static int __init fpga_driver_init(void)
 
 driver_exit:
 	pci_unregister_driver(&fpga_driver);
-chrdev_exit:
 	unregister_chrdev_region(fpga.dev, 2);
 exit:
 	return ret;
