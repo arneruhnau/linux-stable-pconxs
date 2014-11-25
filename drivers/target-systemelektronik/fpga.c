@@ -324,12 +324,19 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 	return wait_result;
 }
 
+static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
+			       size_t size, loff_t *offset)
+{
+	return -EINVAL;
+}
+
 static const struct file_operations fpga_cdev_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
 	.open		= fpga_cdev_open,
 	.release	= fpga_cdev_release,
 	.read		= fpga_cdev_read,
+	.write		= fpga_cdev_write,
 	.mmap		= fpga_cdev_mmap,
 };
 
