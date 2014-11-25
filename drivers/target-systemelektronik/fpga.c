@@ -72,6 +72,7 @@ struct fpga_dev {
 	unsigned int major_device_number;
 	dev_t dev;
 	struct cdev cdev;
+	void __iomem *bar1;
 };
 
 static struct class *device_class;
@@ -236,11 +237,12 @@ static int fpga_driver_probe(struct pci_dev *dev,
 			dev_err(&dev->dev, "pci_enable_device() failed\n");
 			return ret;
 		}
-		ret = pcim_iomap_regions(dev, 0, TARGET_FPGA_DRIVER_NAME);
+		ret = pcim_iomap_regions(dev, 1 << 0 | 1 << 1, TARGET_FPGA_DRIVER_NAME);
 		if (ret) {
 			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
 		}
+		fpga.bar1 = pcim_iomap_table(dev)[1];
 		if (!fpga_allocate_buffers(dev))
 			return -ENOMEM;
 		dw_pcie_prog_viewports_inbound(dev);
@@ -331,12 +333,71 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 	return wait_result;
 }
 
+static void bar_write(u32 value, int offset)
+{
+	iowrite32(value, fpga.bar1 + offset);
+}
+
+static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
+			       size_t size, loff_t *offset)
+{
+	/*
+
+		buf			length
+		on			3
+		off			4
+		samples \d{1,4}		9-13
+		trigger \d{1,4}		9-13
+		pause \d{1,4}		12
+	*/
+#define MAXIMAL_INPUT_LENGTH 13
+
+	char *copy;
+	u32 uservalue;
+	int ret;
+
+	if (size > MAXIMAL_INPUT_LENGTH)
+		return -EINVAL;
+	copy = kzalloc(size, GFP_KERNEL);
+	if (copy == NULL)
+		return -ENOMEM;
+	strncpy_from_user(copy, buf, size);
+	ret = size;
+	if (strcmp(copy, "on") == 0)
+	{
+		bar_write(1, TARGET_FPGA_ADC_ONOFF);
+	}
+	else if (strcmp(copy, "off") == 0)
+	{
+		bar_write(0, TARGET_FPGA_ADC_ONOFF);
+	}
+	else if (sscanf(copy, "samples %i", &uservalue) == 1)
+	{
+		bar_write(uservalue, TARGET_FPGA_SAMPLES);
+	}
+	else if (sscanf(copy, "trigger %i", &uservalue) == 1)
+	{
+		bar_write(uservalue, TARGET_FPGA_TRIGGER);
+	}
+	else if (sscanf(copy, "pause %i", &uservalue) == 1)
+	{
+		bar_write(uservalue, TARGET_FPGA_PAUSE_COUNTER);
+	}
+	else {
+		ret = -EINVAL;
+	}
+
+	kfree(copy);
+	return ret;
+}
+
 static const struct file_operations fpga_cdev_ops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
 	.open		= fpga_cdev_open,
 	.release	= fpga_cdev_release,
 	.read		= fpga_cdev_read,
+	.write		= fpga_cdev_write,
 	.mmap		= fpga_cdev_mmap,
 };
 
