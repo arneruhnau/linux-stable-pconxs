@@ -15,4 +15,9 @@
 #define PCIE_ATU_LOWER_TARGET           0x918
 #define PCIE_ATU_UPPER_TARGET           0x91C
 
+#define TARGET_FPGA_ADC_CONFIG		0
+#define TARGET_FPGA_TRIGGER		32
+#define TARGET_FPGA_SAMPLES		48
+#define TARGET_FPGA_ADC_ONOFF		64
+
 #endif

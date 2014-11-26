@@ -364,19 +364,19 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 
 	if (strcmp(copy, "on") == 0)
 	{
-		bar_write16(1, 64);
+		bar_write16(1, TARGET_FPGA_ADC_ONOFF);
 	}
 	else if (strcmp(copy, "off") == 0)
 	{
-		bar_write16(0, 64);
+		bar_write16(0, TARGET_FPGA_ADC_ONOFF);
 	}
 	else if (sscanf(copy, "samples %i", &uservalue) == 1)
 	{
-		bar_write16((u16)uservalue, 48);
+		bar_write16((u16)uservalue, TARGET_FPGA_SAMPLES);
 	}
 	else if (sscanf(copy, "trigger %i", &uservalue) == 1)
 	{
-		bar_write16((u16)uservalue, 32);
+		bar_write16((u16)uservalue, TARGET_FPGA_TRIGGER);
 	}
 
 	kfree(copy);
