@@ -71,6 +71,7 @@ struct fpga_dev {
 	unsigned int major_device_number;
 	dev_t dev;
 	struct cdev cdev;
+	void __iomem *bar1;
 };
 
 static struct class *device_class;
@@ -239,6 +240,7 @@ static int fpga_driver_probe(struct pci_dev *dev,
 			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
 		}
+		fpga.bar1 = pcim_iomap_table(dev)[1];
 		if (!fpga_allocate_buffers(dev))
 			return -ENOMEM;
 		dw_pcie_prog_viewports_inbound(dev);
@@ -326,8 +328,8 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 
 static void bar_write16(u16 value, int offset)
 {
-	printk(KERN_ERR "I would write %u to bar1@%d", value, offset);
-	//iowrite16(value, bar1 + offset);
+	printk(KERN_ERR "Write %u to bar1@%d", value, offset);
+	iowrite16(value, fpga.bar1 + offset);
 }
 
 static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
