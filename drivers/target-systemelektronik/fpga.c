@@ -324,6 +324,12 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 	return wait_result;
 }
 
+static void bar_write16(u16 value, int offset)
+{
+	printk(KERN_ERR "I would write %u to bar1@%d", value, offset);
+	//iowrite16(value, bar1 + offset);
+}
+
 static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 			       size_t size, loff_t *offset)
 {
@@ -339,6 +345,7 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	long input_length;
 	long copied_length;
 	char *copy;
+	int uservalue;
 
 	input_length = strnlen_user(buf, 13);
 	if (input_length < 0)
@@ -352,6 +359,23 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	if (copy == NULL)
 		return -ENOMEM;
 	copied_length = strncpy_from_user(copy, buf, input_length);
+
+	if (strcmp(copy, "on") == 0)
+	{
+		bar_write16(1, 64);
+	}
+	else if (strcmp(copy, "off") == 0)
+	{
+		bar_write16(0, 64);
+	}
+	else if (sscanf(copy, "samples %i", &uservalue) == 1)
+	{
+		bar_write16((u16)uservalue, 48);
+	}
+	else if (sscanf(copy, "trigger %i", &uservalue) == 1)
+	{
+		bar_write16((u16)uservalue, 32);
+	}
 
 	kfree(copy);
 	return -EINVAL;
