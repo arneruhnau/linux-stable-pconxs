@@ -348,6 +348,7 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	long input_length;
 	char *copy;
 	int uservalue;
+	int ret;
 
 	input_length = strnlen_user(buf, MAXIMAL_INPUT_LENGTH);
 	if (input_length < 0)
@@ -362,6 +363,7 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 		return -ENOMEM;
 	strncpy_from_user(copy, buf, input_length);
 
+	ret = 0;
 	if (strcmp(copy, "on") == 0)
 	{
 		bar_write16(1, TARGET_FPGA_ADC_ONOFF);
@@ -378,9 +380,12 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	{
 		bar_write16((u16)uservalue, TARGET_FPGA_TRIGGER);
 	}
+	else {
+		ret = -EINVAL;
+	}
 
 	kfree(copy);
-	return -EINVAL;
+	return ret;
 }
 
 static const struct file_operations fpga_cdev_ops = {
