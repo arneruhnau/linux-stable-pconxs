@@ -327,6 +327,33 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 			       size_t size, loff_t *offset)
 {
+	/*
+
+		buf			length
+		on			3
+		off			4
+		samples \d{1,4}		9-13
+		trigger \d{1,4}		9-13
+	*/
+
+	long input_length;
+	long copied_length;
+	char *copy;
+
+	input_length = strnlen_user(buf, 13);
+	if (input_length < 0)
+		return input_length;
+	if (input_length == 0)
+		return -EFAULT;
+	if (input_length > 13)
+		return -EINVAL;
+
+	copy = kzalloc(input_length, GFP_KERNEL);
+	if (copy == NULL)
+		return -ENOMEM;
+	copied_length = strncpy_from_user(copy, buf, input_length);
+
+	kfree(copy);
 	return -EINVAL;
 }
 
