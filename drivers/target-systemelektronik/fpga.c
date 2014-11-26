@@ -343,24 +343,24 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 		samples \d{1,4}		9-13
 		trigger \d{1,4}		9-13
 	*/
+#define MAXIMAL_INPUT_LENGTH 13
 
 	long input_length;
-	long copied_length;
 	char *copy;
 	int uservalue;
 
-	input_length = strnlen_user(buf, 13);
+	input_length = strnlen_user(buf, MAXIMAL_INPUT_LENGTH);
 	if (input_length < 0)
 		return input_length;
 	if (input_length == 0)
 		return -EFAULT;
-	if (input_length > 13)
+	if (input_length > MAXIMAL_INPUT_LENGTH)
 		return -EINVAL;
 
 	copy = kzalloc(input_length, GFP_KERNEL);
 	if (copy == NULL)
 		return -ENOMEM;
-	copied_length = strncpy_from_user(copy, buf, input_length);
+	strncpy_from_user(copy, buf, input_length);
 
 	if (strcmp(copy, "on") == 0)
 	{
