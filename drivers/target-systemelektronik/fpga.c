@@ -346,7 +346,7 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 #define MAXIMAL_INPUT_LENGTH 13
 
 	char *copy;
-	int uservalue;
+	u32 uservalue;
 	int ret;
 
 	if (size > MAXIMAL_INPUT_LENGTH)
@@ -366,15 +366,15 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	}
 	else if (sscanf(copy, "samples %i", &uservalue) == 1)
 	{
-		bar_write((u32)uservalue, TARGET_FPGA_SAMPLES);
+		bar_write(uservalue, TARGET_FPGA_SAMPLES);
 	}
 	else if (sscanf(copy, "trigger %i", &uservalue) == 1)
 	{
-		bar_write((u32)uservalue, TARGET_FPGA_TRIGGER);
+		bar_write(uservalue, TARGET_FPGA_TRIGGER);
 	}
 	else if (sscanf(copy, "pause %i", &uservalue) == 1)
 	{
-		bar_write((u32)uservalue, TARGET_FPGA_PAUSE_COUNTER);
+		bar_write(uservalue, TARGET_FPGA_PAUSE_COUNTER);
 	}
 	else {
 		ret = -EINVAL;
