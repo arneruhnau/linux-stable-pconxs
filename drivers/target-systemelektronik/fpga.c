@@ -235,7 +235,7 @@ static int fpga_driver_probe(struct pci_dev *dev,
 			dev_err(&dev->dev, "pci_enable_device() failed\n");
 			return ret;
 		}
-		ret = pcim_iomap_regions(dev, 0, TARGET_FPGA_DRIVER_NAME);
+		ret = pcim_iomap_regions(dev, 1 << 0 | 1 << 1, TARGET_FPGA_DRIVER_NAME);
 		if (ret) {
 			dev_err(&dev->dev, "pcim_iomap_regions() failed\n");
 			return ret;
@@ -326,10 +326,9 @@ static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 	return wait_result;
 }
 
-static void bar_write16(u16 value, int offset)
+static void bar_write(u32 value, int offset)
 {
-	printk(KERN_ERR "Write %u to bar1@%d", value, offset);
-	iowrite16(value, fpga.bar1 + offset);
+	iowrite32(value, fpga.bar1 + offset);
 }
 
 static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
@@ -345,40 +344,32 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	*/
 #define MAXIMAL_INPUT_LENGTH 13
 
-	long input_length;
 	char *copy;
 	int uservalue;
 	int ret;
 
-	input_length = strnlen_user(buf, MAXIMAL_INPUT_LENGTH);
-	if (input_length < 0)
-		return input_length;
-	if (input_length == 0)
-		return -EFAULT;
-	if (input_length > MAXIMAL_INPUT_LENGTH)
+	if (size > MAXIMAL_INPUT_LENGTH)
 		return -EINVAL;
-
-	copy = kzalloc(input_length, GFP_KERNEL);
+	copy = kzalloc(size, GFP_KERNEL);
 	if (copy == NULL)
 		return -ENOMEM;
-	strncpy_from_user(copy, buf, input_length);
-
-	ret = 0;
+	strncpy_from_user(copy, buf, size);
+	ret = size;
 	if (strcmp(copy, "on") == 0)
 	{
-		bar_write16(1, TARGET_FPGA_ADC_ONOFF);
+		bar_write(1, TARGET_FPGA_ADC_ONOFF);
 	}
 	else if (strcmp(copy, "off") == 0)
 	{
-		bar_write16(0, TARGET_FPGA_ADC_ONOFF);
+		bar_write(0, TARGET_FPGA_ADC_ONOFF);
 	}
 	else if (sscanf(copy, "samples %i", &uservalue) == 1)
 	{
-		bar_write16((u16)uservalue, TARGET_FPGA_SAMPLES);
+		bar_write((u32)uservalue, TARGET_FPGA_SAMPLES);
 	}
 	else if (sscanf(copy, "trigger %i", &uservalue) == 1)
 	{
-		bar_write16((u16)uservalue, TARGET_FPGA_TRIGGER);
+		bar_write((u32)uservalue, TARGET_FPGA_TRIGGER);
 	}
 	else {
 		ret = -EINVAL;
