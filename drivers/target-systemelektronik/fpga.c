@@ -341,6 +341,7 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 		off			4
 		samples \d{1,4}		9-13
 		trigger \d{1,4}		9-13
+		pause \d{1,4}		12
 	*/
 #define MAXIMAL_INPUT_LENGTH 13
 
@@ -370,6 +371,10 @@ static ssize_t fpga_cdev_write(struct file *filp, const char __user *buf,
 	else if (sscanf(copy, "trigger %i", &uservalue) == 1)
 	{
 		bar_write((u32)uservalue, TARGET_FPGA_TRIGGER);
+	}
+	else if (sscanf(copy, "pause %i", &uservalue) == 1)
+	{
+		bar_write((u32)uservalue, TARGET_FPGA_PAUSE_COUNTER);
 	}
 	else {
 		ret = -EINVAL;
