@@ -66,6 +66,7 @@ struct fpga_dev {
 	int interrupts_available;
 
 	atomic_t unread_data_items;
+	u32 last_offset;
 	u32 counts_position;
 
 	unsigned int major_device_number;
@@ -87,6 +88,7 @@ static DECLARE_COMPLETION(events_available);
 
 static struct fpga_dev fpga = {
 	.unread_data_items = ATOMIC_INIT(0),
+	.last_offset = 0,
 	.counts_position = 0,
 	.counts = {
 		.size = 16 * PAGE_SIZE
@@ -312,15 +314,20 @@ static int fpga_cdev_mmap(struct file *filp, struct vm_area_struct *vma)
 static ssize_t fpga_cdev_read(struct file *filp, char __user *buf,
 			      size_t size, loff_t *offset)
 {
-	int to_read, wait_result;
+	int bytes_to_read, from_position, wait_result;
+	size_t result;
 
 	wait_result = wait_for_completion_killable_timeout(
 		&events_available, msecs_to_jiffies(250)
 	);
 
 	if (wait_result > 0) {
-		to_read = atomic_xchg(&fpga.unread_data_items, 0);
-		return copy_to_user(buf, &to_read, sizeof(int));
+		bytes_to_read = atomic_xchg(&fpga.unread_data_items, 0);
+		from_position = fpga.last_offset;
+		fpga.last_offset = (fpga.last_offset + bytes_to_read) % data_size;
+		result = copy_to_user(buf, &from_position, sizeof(int));
+		result += copy_to_user(buf + sizeof(int), &bytes_to_read, sizeof(int));
+		return result;
 	} else if (wait_result == 0)
 		return -ETIME;
 	return wait_result;
